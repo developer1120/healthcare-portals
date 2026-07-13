@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="description" content="Mendwell: your visits, messages, results and care team in one place." />
+    <meta name="theme-color" content="#183A2F" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Mendwell</title>
+    <script>
+      // Set the theme before first paint so dark mode does not flash light on load.
+      // Mirrors resolveTheme() in src/theme/themeStore.ts.
+      (function () {
+        try {
+          var saved = JSON.parse(localStorage.getItem('mendwell:theme') || 'null');
+          var preference = (saved && saved.state && saved.state.preference) || 'system';
+          var dark =
+            preference === 'dark' ||
+            (preference === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+        } catch (_) {
+          document.documentElement.dataset.theme = 'light';
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
