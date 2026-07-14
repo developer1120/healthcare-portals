@@ -245,3 +245,250 @@ export interface DoseLog {
 export type VitalSource = 'home' | 'clinic' | 'device';
 
 interface VitalBase {
+  id: Id;
+  patientId: Id;
+  takenAt: IsoDateTime;
+  source: VitalSource;
+  note?: string;
+}
+
+export interface BloodPressureReading extends VitalBase {
+  kind: 'blood-pressure';
+  systolic: number;
+  diastolic: number;
+}
+
+export interface HeartRateReading extends VitalBase {
+  kind: 'heart-rate';
+  bpm: number;
+}
+
+export interface GlucoseReading extends VitalBase {
+  kind: 'glucose';
+  /** Stored in mg/dL. */
+  mgPerDl: number;
+  context: 'fasting' | 'before-meal' | 'after-meal' | 'random';
+}
+
+export interface WeightReading extends VitalBase {
+  kind: 'weight';
+  /** Stored in kilograms. */
+  kg: number;
+}
+
+export type VitalReading = BloodPressureReading | HeartRateReading | GlucoseReading | WeightReading;
+export type VitalKind = VitalReading['kind'];
+
+// ── Health record ───────────────────────────────────────────────────────────
+
+export type Severity = 'mild' | 'moderate' | 'severe';
+
+export interface Allergy {
+  id: Id;
+  patientId: Id;
+  substance: string;
+  reaction: string;
+  severity: Severity;
+  recordedAt: IsoDate;
+  /** Patients can add allergies; a clinician confirms them at the next visit. */
+  reportedBy?: 'patient' | 'clinician';
+  verified?: boolean;
+}
+
+export interface Condition {
+  id: Id;
+  patientId: Id;
+  name: string;
+  /** ICD-10 code. */
+  code: string;
+  status: 'active' | 'resolved';
+  onset: IsoDate;
+  resolvedOn?: IsoDate;
+}
+
+export interface Immunization {
+  id: Id;
+  patientId: Id;
+  vaccine: string;
+  dose?: string;
+  givenOn: IsoDate;
+  site?: string;
+  /** When the next dose is due, if any. */
+  nextDueOn?: IsoDate;
+}
+
+export type DocumentKind = 'visit-summary' | 'referral' | 'imaging' | 'letter';
+
+export interface ClinicalDocument {
+  id: Id;
+  patientId: Id;
+  appointmentId?: Id;
+  kind: DocumentKind;
+  title: string;
+  authorId: Id;
+  createdAt: IsoDateTime;
+  sections: { heading: string; body: string }[];
+}
+
+// ── Billing and insurance ───────────────────────────────────────────────────
+
+export interface StatementLine {
+  id: Id;
+  description: string;
+  serviceDate: IsoDate;
+  chargeCents: number;
+  insurancePaidCents: number;
+  adjustmentCents: number;
+}
+
+export interface Payment {
+  id: Id;
+  paidAt: IsoDateTime;
+  amountCents: number;
+  method: 'card' | 'bank' | 'plan-instalment';
+  /** The saved method used, when paid through the portal. */
+  methodId?: Id;
+}
+
+/** A card or bank account the patient saved with the billing office. Only the last digits are kept. */
+export interface PaymentMethod {
+  id: Id;
+  patientId: Id;
+  kind: 'card' | 'bank';
+  /** "Visa", "Checking". */
+  label: string;
+  last4: string;
+}
+
+export interface PaymentPlan {
+  id: Id;
+  patientId: Id;
+  statementId: Id;
+  totalCents: number;
+  months: number;
+  /** The regular instalment; the last one absorbs any rounding. */
+  monthlyCents: number;
+  methodId: Id;
+  createdAt: IsoDateTime;
+  status: 'active' | 'completed' | 'cancelled';
+}
+
+export interface Statement {
+  id: Id;
+  patientId: Id;
+  issuedAt: IsoDate;
+  dueOn: IsoDate;
+  lines: StatementLine[];
+  payments: Payment[];
+}
+
+export interface InsuranceCoverage {
+  id: Id;
+  patientId: Id;
+  payer: string;
+  plan: string;
+  memberId: string;
+  groupNumber: string;
+  priority: 'primary' | 'secondary';
+  copayCents: Partial<Record<'primary-care' | 'specialist' | 'video', number>>;
+  deductibleCents: number;
+  deductibleMetCents: number;
+  outOfPocketMaxCents: number;
+  outOfPocketMetCents: number;
+  /** Share of costs the patient pays after the deductible, 0–1. */
+  coinsurance: number;
+  validFrom: IsoDate;
+  validTo: IsoDate;
+}
+
+// ── Tasks ───────────────────────────────────────────────────────────────────
+
+export type TaskKind = 'form' | 'log-vitals' | 'refill' | 'pre-check' | 'payment' | 'read-result';
+
+/** Something the patient needs to do, shown on the dashboard and in the care panel. */
+export interface PatientTask {
+  id: Id;
+  patientId: Id;
+  kind: TaskKind;
+  title: string;
+  dueAt?: IsoDateTime;
+  completedAt?: IsoDateTime;
+  /** In-app path that completes the task. */
+  href: string;
+  /** The record the task is about, e.g. the medication to refill. */
+  relatedId?: Id;
+}
+
+// ── Notifications and reminders ─────────────────────────────────────────────
+
+export type NotificationKind =
+  | 'message'
+  | 'result'
+  | 'result-reviewed'
+  | 'refill'
+  | 'appointment'
+  | 'check-in'
+  | 'dose'
+  | 'billing'
+  | 'immunization';
+
+/** How and when the patient wants reminders. Messages and results always notify. */
+export interface ReminderPrefs {
+  patientId: Id;
+  appointmentLeadHours: 2 | 24 | 48;
+  medicationReminders: boolean;
+  billingReminders: boolean;
+  /** Also send to the email and phone on file (simulated in the demo). */
+  email: boolean;
+  sms: boolean;
+}
+
+/** What the patient has read or cleared. Notifications themselves are worked out from their records. */
+export interface NotificationState {
+  patientId: Id;
+  readIds: string[];
+  /** "Mark all as read": anything that happened before this counts as read. */
+  readAllBefore?: IsoDateTime;
+  dismissedIds: string[];
+}
+
+// ── Profile, caregivers and privacy ─────────────────────────────────────────
+
+/** Parts of the portal a caregiver can see or act on. */
+export type CaregiverScope = 'appointments' | 'messages' | 'results' | 'medications' | 'billing';
+
+/** Someone the patient lets into their portal, e.g. a parent or adult child. */
+export interface CaregiverGrant {
+  id: Id;
+  patientId: Id;
+  name: string;
+  email: string;
+  relationship: string;
+  scopes: CaregiverScope[];
+  status: 'invited' | 'active' | 'revoked';
+  invitedAt: IsoDateTime;
+  acceptedAt?: IsoDateTime;
+  revokedAt?: IsoDateTime;
+  /** Access ends after this day, e.g. for a short stay. */
+  expiresOn?: IsoDate;
+}
+
+export type ConsentKind = 'records-exchange' | 'research' | 'surveys';
+
+export interface Consent {
+  patientId: Id;
+  kind: ConsentKind;
+  granted: boolean;
+  updatedAt: IsoDateTime;
+}
+
+export type AccessAction = 'viewed-chart' | 'reviewed-results' | 'replied-message' | 'updated-billing';
+
+/** Who opened or changed the patient's record, for the patient's own access log. */
+export interface AccessLogEntry {
+  id: Id;
+  patientId: Id;
+  actorId: Id;
+  action: AccessAction;
+  at: IsoDateTime;
+}
