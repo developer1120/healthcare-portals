@@ -1,0 +1,80 @@
+import type { Clinician, Patient, WorkingHours } from '@/domain/types';
+
+/** The patient the demo portal signs in as. */
+export const PRIMARY_PATIENT_ID = 'pat-ava';
+
+function hours(weekdays: WorkingHours['weekday'][], start: string, end: string): WorkingHours[] {
+  return weekdays.map((weekday) => ({ weekday, start, end }));
+}
+
+export const clinicians: Clinician[] = [
+  {
+    id: 'cln-lindqvist',
+    name: 'Jonas Lindqvist',
+    role: 'nurse-practitioner',
+    credentials: 'FNP-C',
+    specialty: 'primary-care',
+    clinic: 'Mendwell Harbour Street',
+    languages: ['English', 'Swedish'],
+    acceptingNewPatients: true,
+    offersVideo: true,
+    bio: 'Family nurse practitioner focused on preventive care and long-term conditions.',
+    workingHours: hours([1, 2, 3, 4, 5], '08:00', '17:00'),
+    slotMinutes: 20,
+  },
+  {
+    id: 'cln-okafor',
+    name: 'Dr. Maya Okafor',
+    role: 'physician',
+    credentials: 'MD, FACC',
+    specialty: 'cardiology',
+    clinic: 'Riverside Heart Clinic',
+    languages: ['English', 'Igbo'],
+    acceptingNewPatients: true,
+    offersVideo: true,
+    bio: 'Cardiologist with a special interest in hypertension and heart health in women.',
+    workingHours: hours([1, 2, 3, 4], '08:30', '16:30'),
+    slotMinutes: 20,
+  },
+  {
+    id: 'cln-ferreira',
+    name: 'Dr. Tomás Ferreira',
+    role: 'physician',
+    credentials: 'MD',
+    specialty: 'endocrinology',
+    clinic: 'Mendwell Harbour Street',
+    languages: ['English', 'Portuguese', 'Spanish'],
+    acceptingNewPatients: true,
+    offersVideo: true,
+    bio: 'Endocrinologist working with patients on diabetes prevention, thyroid and metabolic health.',
+    workingHours: hours([2, 4, 5], '09:00', '17:00'),
+    slotMinutes: 30,
+  },
+  {
+    id: 'cln-raman',
+    name: 'Dr. Priya Raman',
+    role: 'physician',
+    credentials: 'MD',
+    specialty: 'dermatology',
+    clinic: 'Northgate Skin Centre',
+    languages: ['English', 'Hindi', 'Tamil'],
+    acceptingNewPatients: false,
+    offersVideo: true,
+    bio: 'Dermatologist treating eczema, acne and skin cancer screening.',
+    workingHours: hours([1, 3], '09:00', '15:00'),
+    slotMinutes: 20,
+  },
+  {
+    id: 'cln-sato',
+    name: 'Dr. Hana Sato',
+    role: 'physician',
+    credentials: 'MD, PhD',
+    specialty: 'neurology',
+    clinic: 'Riverside Neurology',
+    languages: ['English', 'Japanese'],
+    acceptingNewPatients: true,
+    offersVideo: true,
+    bio: 'Neurologist caring for people with migraine, epilepsy and sleep disorders.',
+    workingHours: hours([3, 4, 5], '10:00', '18:00'),
+    slotMinutes: 40,
+  },
