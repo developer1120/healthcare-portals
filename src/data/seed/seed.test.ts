@@ -84,3 +84,89 @@ describe('seed data', () => {
       expect(hours, `${appointment.id} on a day off`).toBeDefined();
       const minutes = start.getHours() * 60 + start.getMinutes();
       const open = parseTime(hours!.start);
+      const close = parseTime(hours!.end);
+      expect(minutes).toBeGreaterThanOrEqual(open.hours * 60 + open.minutes);
+      expect(minutes + appointment.durationMinutes).toBeLessThanOrEqual(close.hours * 60 + close.minutes);
+    }
+  });
+
+  it('marks past visits completed (or missed, or cancelled) and future ones booked', () => {
+    for (const appointment of seed.appointments) {
+      if (appointment.status === 'cancelled') continue;
+      const past = toDate(appointment.start) < TEST_NOW;
+      expect(past ? ['completed', 'no-show'] : ['booked']).toContain(appointment.status);
+    }
+  });
+
+  it('gives the primary patient an upcoming video visit with cardiology', () => {
+    const next = seed.appointments
+      .filter((a) => a.patientId === PRIMARY_PATIENT_ID && a.status === 'booked')
+      .sort((a, b) => a.start.localeCompare(b.start))[0]!;
+    expect(next).toMatchObject({ clinicianId: 'cln-okafor', mode: 'video', location: 'Video visit' });
+    expect(minutesUntil(next.start, TEST_NOW)).toBeGreaterThan(24 * 60);
+  });
+
+  it('ends the home blood pressure log on yesterday’s 128/82', () => {
+    const readings = seed.vitals
+      .filter((v) => v.patientId === PRIMARY_PATIENT_ID && v.kind === 'blood-pressure' && v.source === 'home')
+      .sort((a, b) => a.takenAt.localeCompare(b.takenAt));
+    expect(readings.length).toBeGreaterThan(60);
+    expect(readings.at(-1)).toMatchObject({ systolic: 128, diastolic: 82 });
+    expect(readings.every((r) => toDate(r.takenAt) < TEST_NOW)).toBe(true);
+  });
+
+  it('includes results with something to flag, and one panel still pending', () => {
+    const avaPanels = seed.labPanels.filter((p) => p.patientId === PRIMARY_PATIENT_ID);
+    const flags = avaPanels.flatMap((p) => p.observations.map(flagObservation));
+    expect(flags).toContain('high');
+    expect(avaPanels.some((p) => p.status === 'pending' && p.observations.length === 0)).toBe(true);
+    expect(avaPanels.filter((p) => p.name === 'Hemoglobin A1c')).toHaveLength(3);
+  });
+
+  it('includes a critical result for the clinician views', () => {
+    const critical = seed.labPanels.flatMap((p) => p.observations).map(flagObservation);
+    expect(critical).toContain('critical-high');
+  });
+
+  it('keeps every timestamp before now except upcoming visits and due dates', () => {
+    for (const thread of seed.threads)
+      for (const message of thread.messages) expect(toDate(message.sentAt) <= TEST_NOW).toBe(true);
+    for (const log of seed.doseLogs) expect(toDate(log.scheduledFor) <= TEST_NOW).toBe(true);
+    for (const panel of seed.labPanels) expect(toDate(panel.collectedAt) < TEST_NOW).toBe(true);
+  });
+
+  it('balances the open statement', () => {
+    const open = seed.statements.find((s) => s.payments.length === 0)!;
+    const owed = open.lines.reduce(
+      (sum, line) => sum + line.chargeCents - line.insurancePaidCents - line.adjustmentCents,
+      0,
+    );
+    // The preventive visit is fully covered; the two diagnostic labs are not.
+    expect(owed).toBe(6_100);
+  });
+
+  it('leaves the primary patient a mix of open and done tasks', () => {
+    const tasks = seed.tasks.filter((t) => t.patientId === PRIMARY_PATIENT_ID);
+    expect(tasks.some((t) => t.completedAt)).toBe(true);
+    expect(tasks.filter((t) => !t.completedAt).length).toBeGreaterThanOrEqual(4);
+  });
+});
+
+describe.each([0, 1, 2, 3, 4, 5, 6])('seed built %i days after the test date', (offset) => {
+  const shifted = createSeed(new Date(TEST_NOW.getTime() + offset * 24 * 60 * 60_000));
+
+  it('still avoids double bookings and days off', () => {
+    const active = shifted.appointments.filter((a) => a.status !== 'cancelled');
+    for (const a of active) {
+      const clinician = shifted.clinicians.find((c) => c.id === a.clinicianId)!;
+      expect(clinician.workingHours.some((h) => h.weekday === getDay(toDate(a.start)))).toBe(true);
+      for (const b of active) {
+        if (a === b || a.clinicianId !== b.clinicianId) continue;
+        const overlaps =
+          toDate(a.start) < addMinutes(toDate(b.start), b.durationMinutes) &&
+          toDate(b.start) < addMinutes(toDate(a.start), a.durationMinutes);
+        expect(overlaps, `${a.id} overlaps ${b.id}`).toBe(false);
+      }
+    }
+  });
+});
