@@ -505,3 +505,511 @@ export function createSeed(now: Date): SeedData {
       startDate: isoDate(-400),
       status: 'active',
       refillsRemaining: 3,
+      daysSupply: 90,
+      lastFilledAt: iso(filledDay, '10:00'),
+      pharmacy: 'Fremont Community Pharmacy',
+    });
+  }
+
+  const refillRequests: RefillRequest[] = [
+    {
+      id: 'rfl-001',
+      medicationId: 'med-metformin',
+      patientId: AVA,
+      requestedAt: iso(-44, '19:12'),
+      status: 'approved',
+      decidedAt: iso(-43, '10:02'),
+      decidedById: 'cln-ferreira',
+      decisionNote: 'Approved for 90 days with 3 refills.',
+    },
+    {
+      id: 'rfl-002',
+      medicationId: 'med-marcus-atorvastatin',
+      patientId: 'pat-marcus',
+      requestedAt: ago(5 * 60),
+      status: 'pending',
+      patientNote: 'Running out on Friday.',
+    },
+    {
+      id: 'rfl-003',
+      medicationId: 'med-samir-metformin',
+      patientId: 'pat-samir',
+      requestedAt: ago(28 * 60),
+      status: 'pending',
+    },
+    {
+      id: 'rfl-004',
+      medicationId: 'med-lucia-fluticasone',
+      patientId: 'pat-lucia',
+      requestedAt: ago(2 * 60),
+      status: 'pending',
+      patientNote: 'Down to my last few puffs.',
+      pharmacy: 'Fremont Community Pharmacy',
+    },
+    {
+      id: 'rfl-005',
+      medicationId: 'med-mei-levothyroxine',
+      patientId: 'pat-mei',
+      requestedAt: ago(5 * 1440 + 90),
+      status: 'pending',
+      pharmacy: 'Fremont Community Pharmacy',
+    },
+  ];
+
+  // Dose history for the last two weeks of Ava's scheduled medicines.
+  const doseLogs: DoseLog[] = [];
+  let doseCount = 0;
+  for (const medication of medications.filter((m) => m.patientId === AVA && m.status === 'active' && !m.asNeeded)) {
+    for (let day = -14; day <= 0; day++) {
+      for (const time of medication.doseTimes) {
+        const scheduled = atTime(now, day, time);
+        if (scheduled > now) continue;
+        const roll = random.next();
+        if (roll < 0.06) continue; // missed: no entry at all
+        doseLogs.push({
+          id: `dose-${String(++doseCount).padStart(4, '0')}`,
+          medicationId: medication.id,
+          scheduledFor: scheduled.toISOString(),
+          skipped: roll < 0.09,
+          takenAt: roll < 0.09 ? undefined : addMinutes(scheduled, random.int(-15, 40)).toISOString(),
+        });
+      }
+    }
+  }
+
+  // ── Messages ──────────────────────────────────────────────────────────────
+  const threads: MessageThread[] = [
+    {
+      id: 'thr-results',
+      patientId: AVA,
+      subject: 'Your lab results are ready',
+      category: 'results',
+      assigneeId: 'cln-delgado',
+      archived: false,
+      clinicianReadAt: ago(170),
+      messages: [
+        {
+          id: 'msg-101',
+          threadId: 'thr-results',
+          authorId: 'cln-delgado',
+          body:
+            'Hi Ava, your HbA1c, lipid panel and metabolic panel from last week are back. Dr. Ferreira will add notes, ' +
+            'but nothing needs urgent action. Your A1c has come down again, nice work.',
+          sentAt: ago(170),
+          attachments: [],
+        },
+      ],
+    },
+    {
+      id: 'thr-dizzy',
+      patientId: AVA,
+      subject: 'Lightheaded in the mornings',
+      category: 'clinical',
+      assigneeId: 'cln-okafor',
+      archived: false,
+      patientReadAt: iso(-11, '18:30'),
+      clinicianReadAt: iso(-12, '15:10'),
+      messages: [
+        {
+          id: 'msg-201',
+          threadId: 'thr-dizzy',
+          authorId: AVA,
+          body:
+            'Since the lisinopril dose went up I sometimes feel lightheaded when I get out of bed. It passes after a ' +
+            'minute. Is this normal?',
+          sentAt: iso(-13, '07:52'),
+          attachments: [],
+        },
+        {
+          id: 'msg-202',
+          threadId: 'thr-dizzy',
+          authorId: 'cln-okafor',
+          body:
+            'Thanks for letting me know. This can happen in the first weeks. Sit on the edge of the bed for a minute ' +
+            'before standing, and keep logging your morning readings. If you faint or it gets worse, call the clinic.',
+          sentAt: iso(-12, '15:08'),
+          attachments: [],
+        },
+        {
+          id: 'msg-203',
+          threadId: 'thr-dizzy',
+          authorId: AVA,
+          body: 'That helps, thank you. Here is this week’s log.',
+          sentAt: iso(-11, '18:29'),
+          attachments: [{ id: 'att-1', name: 'bp-log-week-6.pdf', sizeBytes: 182_400, mimeType: 'application/pdf' }],
+        },
+      ],
+    },
+    {
+      id: 'thr-metformin',
+      patientId: AVA,
+      subject: 'Metformin refill',
+      category: 'refill',
+      assigneeId: 'cln-ferreira',
+      archived: true,
+      patientReadAt: iso(-43, '12:00'),
+      clinicianReadAt: iso(-43, '10:00'),
+      messages: [
+        {
+          id: 'msg-301',
+          threadId: 'thr-metformin',
+          authorId: AVA,
+          body: 'I’m down to my last week of metformin. Could you send a refill to Hawthorne Pharmacy?',
+          sentAt: iso(-44, '19:12'),
+          attachments: [],
+        },
+        {
+          id: 'msg-302',
+          threadId: 'thr-metformin',
+          authorId: 'cln-ferreira',
+          body: 'Done, 90 days with three refills. It should be ready tomorrow afternoon.',
+          sentAt: iso(-43, '10:02'),
+          attachments: [],
+        },
+      ],
+    },
+    {
+      id: 'thr-billing',
+      patientId: AVA,
+      subject: 'Question about my statement',
+      category: 'billing',
+      assigneeId: 'cln-brooks',
+      archived: false,
+      patientReadAt: iso(-6, '20:15'),
+      clinicianReadAt: iso(-6, '09:30'),
+      messages: [
+        {
+          id: 'msg-401',
+          threadId: 'thr-billing',
+          authorId: AVA,
+          body: 'My statement shows a lab charge from the physical. Wasn’t that covered as preventive care?',
+          sentAt: iso(-7, '21:03'),
+          attachments: [],
+        },
+        {
+          id: 'msg-402',
+          threadId: 'thr-billing',
+          authorId: 'cln-brooks',
+          body:
+            'The physical itself was preventive, but the A1c is a diagnostic test because of your prediabetes, so ' +
+            'it goes towards your deductible. I can set up a payment plan if that helps.',
+          sentAt: iso(-6, '09:41'),
+          attachments: [],
+        },
+      ],
+    },
+  ];
+
+  // Messages from the rest of the panel, for the clinician inbox. Times are minutes ago.
+  const panelThreads: [Id, Id, string, ThreadCategory, Id, [Id, number, string][], number?][] = [
+    ['thr-ethan-headache', 'pat-ethan', 'Worst headache of my life', 'clinical', 'cln-lindqvist', [
+      ['pat-ethan', 35, 'I’ve had the worst headache of my life since I woke up, and the vision in my right eye is blurry. Tylenol hasn’t touched it.'],
+    ]],
+    ['thr-ruth-fall', 'pat-ruth', 'I fell again', 'clinical', 'cln-lindqvist', [
+      ['pat-ruth', 130, 'I slipped getting out of the bath this morning. My right hip hurts when I stand on it and I feel a bit dizzy. My daughter is with me.'],
+    ]],
+    ['thr-mei-tired', 'pat-mei', 'Still exhausted', 'clinical', 'cln-lindqvist', [
+      ['pat-mei', 12 * 1440, 'I’m tired all the time and my hair is thinning. Could it be my thyroid again?'],
+      ['cln-lindqvist', 11 * 1440, 'It could be. I’ve restarted levothyroxine at 75 mcg. We’ll recheck your TSH in six weeks.'],
+      ['pat-mei', 5 * 1440, 'It’s been a week and I’m still exhausted by mid-afternoon. Is that normal, or should I come in?'],
+    ], 4 * 1440],
+    ['thr-marcus-sugars', 'pat-marcus', 'High morning sugars', 'clinical', 'cln-lindqvist', [
+      ['pat-marcus', 26 * 60, 'My fasting sugars have been 190 to 230 all week. I’m taking the metformin twice a day like you said. Should I be doing something different?'],
+    ], 20 * 60],
+    ['thr-kai-melatonin', 'pat-kai', 'Melatonin while I wait', 'general', 'cln-lindqvist', [
+      ['pat-kai', 22 * 60, 'Is it OK to take melatonin while I wait for my sleep appointment? Nothing else seems to help.'],
+    ]],
+    ['thr-lucia-inhaler', 'pat-lucia', 'Inhaler running low', 'refill', 'cln-lindqvist', [
+      ['pat-lucia', 180, 'I’m down to my last few puffs of the fluticasone. Could you send a refill to Fremont Community Pharmacy?'],
+    ]],
+    ['thr-grace-furosemide', 'pat-grace', 'When to take the water pill', 'clinical', 'cln-lindqvist', [
+      ['pat-grace', 2 * 1440, 'Should I take the furosemide in the morning or at night?'],
+      ['cln-lindqvist', 1440 + 300, 'Mornings, please. At night it will keep you up going to the bathroom. Weigh yourself each morning and let me know if you gain more than 2 lb in a day.'],
+    ], 1440 + 300],
+    ['thr-dev-knee', 'pat-dev', 'Knee still sore', 'clinical', 'cln-delgado', [
+      ['pat-dev', 300, 'My knee is still sore a week after the injury. Should I keep icing it, or switch to heat?'],
+    ]],
+  ];
+  for (const [id, patientId, subject, category, assigneeId, messages, readMinutesAgo] of panelThreads) {
+    threads.push({
+      id,
+      patientId,
+      subject,
+      category,
+      assigneeId,
+      archived: false,
+      clinicianReadAt: readMinutesAgo === undefined ? undefined : ago(readMinutesAgo),
+      patientReadAt: ago(Math.min(...messages.map(([, minutes]) => minutes)) - 1),
+      messages: messages.map(([authorId, minutes, body], index) => ({
+        id: `msg-${id.slice(4)}-${index + 1}`,
+        threadId: id,
+        authorId,
+        body,
+        sentAt: ago(minutes),
+        attachments: [],
+      })),
+    });
+  }
+
+  // ── Health record ─────────────────────────────────────────────────────────
+  const allergies: Allergy[] = [
+    { id: 'alg-1', patientId: AVA, substance: 'Penicillin', reaction: 'Hives', severity: 'moderate', recordedAt: '2009-07-14' },
+    { id: 'alg-2', patientId: AVA, substance: 'Latex', reaction: 'Skin rash', severity: 'mild', recordedAt: '2016-02-03' },
+    { id: 'alg-3', patientId: 'pat-grace', substance: 'Sulfonamide antibiotics', reaction: 'Widespread rash', severity: 'moderate', recordedAt: '2011-03-08', reportedBy: 'clinician', verified: true },
+    { id: 'alg-4', patientId: 'pat-ruth', substance: 'Codeine', reaction: 'Nausea and confusion', severity: 'mild', recordedAt: '2018-10-22', reportedBy: 'clinician', verified: true },
+    { id: 'alg-5', patientId: 'pat-marcus', substance: 'Shellfish', reaction: 'Throat swelling', severity: 'severe', recordedAt: '2005-07-01', reportedBy: 'patient', verified: true },
+  ];
+
+  const conditions: Condition[] = [
+    { id: 'cnd-1', patientId: AVA, name: 'Essential hypertension', code: 'I10', status: 'active', onset: isoDate(okaforPastDay - 30) },
+    { id: 'cnd-2', patientId: AVA, name: 'Prediabetes', code: 'R73.03', status: 'active', onset: isoDate(-180) },
+    { id: 'cnd-3', patientId: AVA, name: 'Seasonal allergic rhinitis', code: 'J30.2', status: 'active', onset: '2012-05-01' },
+    {
+      id: 'cnd-4',
+      patientId: AVA,
+      name: 'Plantar fasciitis',
+      code: 'M72.2',
+      status: 'resolved',
+      onset: isoDate(-430),
+      resolvedOn: isoDate(-360),
+    },
+  ];
+  const panelConditions: [Id, string, string, string][] = [
+    ['pat-marcus', 'Type 2 diabetes mellitus', 'E11.9', '2014-03-10'],
+    ['pat-marcus', 'Hyperlipidemia', 'E78.5', '2012-08-22'],
+    ['pat-marcus', 'Essential hypertension', 'I10', '2016-01-15'],
+    ['pat-lucia', 'Mild persistent asthma', 'J45.30', '2003-09-01'],
+    ['pat-grace', 'Atrial fibrillation', 'I48.91', '2019-06-04'],
+    ['pat-grace', 'Chronic kidney disease, stage 3a', 'N18.31', '2021-11-30'],
+    ['pat-grace', 'Essential hypertension', 'I10', '2008-02-12'],
+    ['pat-grace', 'Heart failure with preserved ejection fraction', 'I50.30', '2023-04-18'],
+    ['pat-samir', 'Type 2 diabetes mellitus', 'E11.9', '2011-05-20'],
+    ['pat-samir', 'Coronary artery disease', 'I25.10', '2020-10-02'],
+    ['pat-samir', 'Essential hypertension', 'I10', '2013-07-07'],
+    ['pat-ethan', 'Migraine without aura', 'G43.009', '2018-02-14'],
+    ['pat-mei', 'Hypothyroidism', 'E03.9', '2017-09-09'],
+    ['pat-olu', 'Essential hypertension', 'I10', '2015-12-01'],
+    ['pat-olu', 'Hyperlipidemia', 'E78.5', '2019-03-03'],
+    ['pat-ruth', 'Osteoporosis', 'M81.0', '2010-04-26'],
+    ['pat-ruth', 'Essential hypertension', 'I10', '2002-06-30'],
+    ['pat-ruth', 'History of falling', 'Z91.81', isoDate(-45)],
+    ['pat-kai', 'Insomnia', 'G47.00', '2024-01-11'],
+  ];
+  panelConditions.forEach(([patientId, name, code, onset], index) =>
+    conditions.push({ id: `cnd-${index + 5}`, patientId, name, code, status: 'active', onset }),
+  );
+
+  const immunizations: Immunization[] = [
+    { id: 'imm-1', patientId: AVA, vaccine: 'Influenza (seasonal)', givenOn: isoDate(-371), site: 'Left deltoid', nextDueOn: isoDate(-6) },
+    { id: 'imm-2', patientId: AVA, vaccine: 'COVID-19 (2025–26 formula)', givenOn: isoDate(-330), site: 'Right deltoid' },
+    { id: 'imm-3', patientId: AVA, vaccine: 'Tdap', givenOn: '2019-05-22', site: 'Left deltoid', nextDueOn: '2029-05-22' },
+    { id: 'imm-4', patientId: AVA, vaccine: 'Hepatitis B', dose: 'Dose 3 of 3', givenOn: '2003-11-10' },
+  ];
+
+  const documents: ClinicalDocument[] = [
+    {
+      id: 'doc-1',
+      patientId: AVA,
+      appointmentId: appointments[2]!.id,
+      kind: 'visit-summary',
+      title: 'Annual physical',
+      authorId: 'cln-lindqvist',
+      createdAt: iso(physicalDay, '12:10'),
+      sections: [
+        { heading: 'Reason for visit', body: 'Yearly preventive check-up.' },
+        {
+          heading: 'What we found',
+          body: 'Blood pressure 131/84 in clinic, improving on lisinopril. Weight down 1.2 kg since spring. Exam otherwise normal.',
+        },
+        { heading: 'Plan', body: 'Repeat A1c and lipids in three weeks. Flu vaccine at the next visit. Keep logging BP at home.' },
+      ],
+    },
+    {
+      id: 'doc-2',
+      patientId: AVA,
+      appointmentId: appointments[0]!.id,
+      kind: 'visit-summary',
+      title: 'Blood pressure review',
+      authorId: 'cln-okafor',
+      createdAt: iso(okaforPastDay, '13:30'),
+      sections: [
+        { heading: 'Reason for visit', body: 'Raised home readings over two months (average 137/87).' },
+        { heading: 'Plan', body: 'Start lisinopril 10 mg each morning. Echocardiogram to rule out structural causes. Review in 10 weeks.' },
+      ],
+    },
+    {
+      id: 'doc-3',
+      patientId: AVA,
+      kind: 'imaging',
+      title: 'Transthoracic echocardiogram',
+      authorId: 'cln-okafor',
+      createdAt: iso(okaforPastDay + 6, '15:00'),
+      sections: [
+        { heading: 'Findings', body: 'Normal left ventricular size and function. Ejection fraction 62%. No valve disease.' },
+        { heading: 'Impression', body: 'Normal study.' },
+      ],
+    },
+    {
+      id: 'doc-4',
+      patientId: AVA,
+      kind: 'referral',
+      title: 'Referral to endocrinology',
+      authorId: 'cln-lindqvist',
+      createdAt: iso(-185, '10:20'),
+      sections: [{ heading: 'Reason', body: 'HbA1c 6.1% with family history of type 2 diabetes. Please advise on prevention.' }],
+    },
+  ];
+
+  // ── Billing and insurance ─────────────────────────────────────────────────
+  const statements: Statement[] = [
+    {
+      id: 'stm-2026-08',
+      patientId: AVA,
+      issuedAt: isoDate(-62),
+      dueOn: isoDate(-32),
+      lines: [
+        {
+          id: 'stl-1',
+          description: 'Specialist video visit, endocrinology',
+          serviceDate: isoDate(ferreiraPastDay),
+          chargeCents: 18_500,
+          insurancePaidCents: 15_000,
+          adjustmentCents: 2_000,
+        },
+      ],
+      payments: [{ id: 'pay-1', paidAt: iso(-40, '20:14'), amountCents: 1_500, method: 'card' }],
+    },
+    {
+      id: 'stm-2026-10',
+      patientId: AVA,
+      issuedAt: isoDate(-10),
+      dueOn: isoDate(20),
+      lines: [
+        {
+          id: 'stl-2',
+          description: 'Preventive visit, established patient',
+          serviceDate: isoDate(physicalDay),
+          chargeCents: 24_500,
+          insurancePaidCents: 22_000,
+          adjustmentCents: 2_500,
+        },
+        {
+          id: 'stl-3',
+          description: 'Hemoglobin A1c',
+          serviceDate: isoDate(physicalDay),
+          chargeCents: 6_800,
+          insurancePaidCents: 2_000,
+          adjustmentCents: 1_300,
+        },
+        {
+          id: 'stl-4',
+          description: 'Lipid panel',
+          serviceDate: isoDate(physicalDay),
+          chargeCents: 5_400,
+          insurancePaidCents: 1_800,
+          adjustmentCents: 1_000,
+        },
+      ],
+      payments: [],
+    },
+  ];
+
+  const year = now.getFullYear();
+  const insurance: InsuranceCoverage[] = [
+    {
+      id: 'ins-1',
+      patientId: AVA,
+      payer: 'Cedarline Health',
+      plan: 'Cedarline Silver PPO',
+      memberId: 'CDL-4821-7730',
+      groupNumber: 'G-20931',
+      priority: 'primary',
+      copayCents: { 'primary-care': 2_500, specialist: 5_000, video: 1_500 },
+      deductibleCents: 150_000,
+      deductibleMetCents: 112_000,
+      outOfPocketMaxCents: 600_000,
+      outOfPocketMetCents: 184_500,
+      coinsurance: 0.2,
+      validFrom: `${year}-01-01`,
+      validTo: `${year}-12-31`,
+    },
+  ];
+
+  // ── Tasks ─────────────────────────────────────────────────────────────────
+  const nextVideo = appointments.find((a) => a.patientId === AVA && a.mode === 'video' && a.status === 'booked')!;
+  const tasks: PatientTask[] = [
+    { id: 'tsk-1', patientId: AVA, kind: 'log-vitals', title: 'Log today’s blood pressure', dueAt: iso(0, '23:59'), href: '/vitals' },
+    { id: 'tsk-2', patientId: AVA, kind: 'refill', title: 'Request a lisinopril refill', dueAt: iso(3, '17:00'), href: '/medications', relatedId: 'med-lisinopril' },
+    {
+      id: 'tsk-3',
+      patientId: AVA,
+      kind: 'pre-check',
+      title: 'Pre-check in for your video visit',
+      dueAt: nextVideo.start,
+      href: `/appointments/${nextVideo.id}/check-in`,
+    },
+    { id: 'tsk-4', patientId: AVA, kind: 'read-result', title: 'Review your new lab results', href: '/results' },
+    { id: 'tsk-5', patientId: AVA, kind: 'payment', title: 'Pay your October statement', dueAt: iso(20, '23:59'), href: '/billing' },
+    {
+      id: 'tsk-6',
+      patientId: AVA,
+      kind: 'form',
+      title: 'Complete the health questionnaire',
+      completedAt: ago(2 * 24 * 60 + 90),
+      href: '/records',
+    },
+  ];
+
+  return {
+    // Copies, so changes made through the mock API never leak into the next seed.
+    patients: structuredClone(patients),
+    clinicians: structuredClone(clinicians),
+    appointments,
+    threads,
+    labPanels,
+    medications,
+    refillRequests,
+    doseLogs,
+    vitals,
+    allergies,
+    conditions,
+    immunizations,
+    documents,
+    statements,
+    insurance,
+    paymentMethods: [
+      { id: 'pm-card', patientId: AVA, kind: 'card', label: 'Visa', last4: '4242' },
+      { id: 'pm-bank', patientId: AVA, kind: 'bank', label: 'Checking', last4: '6789' },
+    ],
+    paymentPlans: [],
+    reminderPrefs: [
+      { patientId: AVA, appointmentLeadHours: 24, medicationReminders: true, billingReminders: true, email: true, sms: false },
+    ],
+    notificationStates: [],
+    caregivers: [
+      {
+        id: 'cg-1',
+        patientId: AVA,
+        name: 'Mia Thompson',
+        email: 'mia.thompson@example.com',
+        relationship: 'Sister',
+        scopes: ['appointments', 'messages'],
+        status: 'active',
+        invitedAt: iso(-62, '19:10'),
+        acceptedAt: iso(-61, '08:45'),
+      },
+    ],
+    consents: [
+      { patientId: AVA, kind: 'records-exchange', granted: true, updatedAt: iso(-400, '10:00') },
+      { patientId: AVA, kind: 'research', granted: false, updatedAt: iso(-400, '10:00') },
+      { patientId: AVA, kind: 'surveys', granted: true, updatedAt: iso(-400, '10:00') },
+    ],
+    accessLog: [
+      { id: 'log-1', patientId: AVA, actorId: 'cln-ferreira', action: 'viewed-chart', at: iso(ferreiraPastDay, '13:52') },
+      { id: 'log-2', patientId: AVA, actorId: 'cln-okafor', action: 'replied-message', at: iso(-12, '15:08') },
+      { id: 'log-3', patientId: AVA, actorId: 'cln-brooks', action: 'updated-billing', at: iso(-6, '09:41') },
+      { id: 'log-4', patientId: AVA, actorId: 'cln-delgado', action: 'reviewed-results', at: ago(180) },
+    ],
+    tasks,
+  };
+}
