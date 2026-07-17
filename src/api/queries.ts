@@ -308,3 +308,314 @@ export function useRecordDose(patientId: Id) {
       queryClient.setQueryData<DoseLog[]>(key, (logs = []) => {
         const others = logs.filter((l) => !same(l));
         if (action === 'clear') return others;
+        return [
+          ...others,
+          {
+            id: `optimistic-${medicationId}-${scheduledFor}`,
+            medicationId,
+            scheduledFor,
+            skipped: action === 'skipped',
+            takenAt: action === 'taken' ? new Date().toISOString() : undefined,
+          },
+        ];
+      });
+      return { previous };
+    },
+    onError: (_error, _request, context) => {
+      if (context?.previous) queryClient.setQueryData(key, context.previous);
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: key }),
+  });
+}
+
+export function useAddReading(patientId: Id) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (reading: NewReading) => api.vitals.add(patientId, reading),
+    // Refreshes vitals everywhere (dashboard tiles too) and the task it may complete.
+    onSettled: () => queryClient.invalidateQueries({ queryKey: queryKeys.patient(patientId) }),
+  });
+}
+
+export function useAddAllergy(patientId: Id) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: Pick<Allergy, 'substance' | 'reaction' | 'severity'>) => api.records.addAllergy(patientId, input),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: queryKeys.record(patientId) }),
+  });
+}
+
+export function usePaymentMethods(patientId: Id) {
+  return useQuery({
+    queryKey: queryKeys.paymentMethods(patientId),
+    queryFn: ({ signal }) => api.billing.methods(patientId, { signal }),
+  });
+}
+
+export function usePaymentPlans(patientId: Id) {
+  return useQuery({
+    queryKey: queryKeys.paymentPlans(patientId),
+    queryFn: ({ signal }) => api.billing.plans(patientId, { signal }),
+  });
+}
+
+export function usePayStatement(patientId: Id) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (request: Omit<PaymentRequest, 'patientId'>) => api.billing.pay({ ...request, patientId }),
+    // Can also complete the payment task, so refresh everything for the patient.
+    onSettled: () => queryClient.invalidateQueries({ queryKey: queryKeys.patient(patientId) }),
+  });
+}
+
+export function useCreatePaymentPlan(patientId: Id) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (request: Omit<PlanRequest, 'patientId'>) => api.billing.createPlan({ ...request, patientId }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: queryKeys.patient(patientId) }),
+  });
+}
+
+export function useRoster(clinicianId: Id) {
+  return useQuery({
+    queryKey: queryKeys.roster(clinicianId),
+    queryFn: ({ signal }) => api.clinic.roster(clinicianId, { signal }),
+  });
+}
+
+export function usePatientChart(clinicianId: Id, patientId: Id) {
+  return useQuery({
+    queryKey: queryKeys.chart(clinicianId, patientId),
+    queryFn: ({ signal }) => api.clinic.chart(clinicianId, patientId, { signal }),
+  });
+}
+
+export function useSchedule(clinicianId: Id, date: string) {
+  return useQuery({
+    queryKey: queryKeys.schedule(clinicianId, date),
+    queryFn: ({ signal }) => api.clinic.schedule(clinicianId, date, { signal }),
+  });
+}
+
+export function useUpdateVisit(clinicianId: Id) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ appointmentId, action }: { appointmentId: Id; action: VisitAction }) =>
+      api.clinic.updateVisit({ clinicianId, appointmentId, action }),
+    // Status shows on the schedule, the roster's next visit and charts.
+    onSettled: () => queryClient.invalidateQueries({ queryKey: queryKeys.clinic(clinicianId) }),
+  });
+}
+
+export function useClinicInbox(clinicianId: Id) {
+  return useQuery({
+    queryKey: queryKeys.inbox(clinicianId),
+    queryFn: ({ signal }) => api.clinic.inbox(clinicianId, { signal }),
+  });
+}
+
+/** Marks a conversation read as soon as it opens, updating the list straight away. */
+export function useMarkInboxRead(clinicianId: Id) {
+  const queryClient = useQueryClient();
+  const key = queryKeys.inbox(clinicianId);
+  return useMutation({
+    mutationFn: (threadId: Id) => api.clinic.markThreadRead({ clinicianId, threadId }),
+    onMutate: (threadId) => {
+      const readAt = new Date().toISOString();
+      queryClient.setQueryData<InboxItem[]>(key, (items) =>
+        items?.map((item) =>
+          item.thread.id === threadId ? { ...item, thread: { ...item.thread, clinicianReadAt: readAt } } : item,
+        ),
+      );
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: key }),
+  });
+}
+
+export function useClinicReply(clinicianId: Id) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ threadId, body }: { threadId: Id; body: string }) => api.clinic.reply({ clinicianId, threadId, body }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: queryKeys.inbox(clinicianId) }),
+  });
+}
+
+export function useReassignThread(clinicianId: Id) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ threadId, assigneeId }: { threadId: Id; assigneeId: Id }) =>
+      api.clinic.reassign({ clinicianId, threadId, assigneeId }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: queryKeys.inbox(clinicianId) }),
+  });
+}
+
+export function useCloseThread(clinicianId: Id) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (threadId: Id) => api.clinic.closeThread({ clinicianId, threadId }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: queryKeys.inbox(clinicianId) }),
+  });
+}
+
+export function useClinicRequests(clinicianId: Id) {
+  return useQuery({
+    queryKey: queryKeys.requests(clinicianId),
+    queryFn: ({ signal }) => api.clinic.requests(clinicianId, { signal }),
+  });
+}
+
+export function useDecideRefill(clinicianId: Id) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (request: { requestId: Id } & RefillDecision) => api.clinic.decideRefill({ clinicianId, ...request }),
+    // Refills feed the queue, the roster's risk and charts.
+    onSettled: () => queryClient.invalidateQueries({ queryKey: queryKeys.clinic(clinicianId) }),
+  });
+}
+
+export function useSignOffLab(clinicianId: Id) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (request: { panelId: Id } & SignOff) => api.clinic.signOffLab({ clinicianId, ...request }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: queryKeys.clinic(clinicianId) }),
+  });
+}
+
+export function useNotifications(patientId: Id) {
+  return useQuery({
+    queryKey: queryKeys.notifications(patientId),
+    queryFn: ({ signal }) => api.notifications.list(patientId, { signal }),
+    // Reminders become due as time passes, so look again every minute.
+    refetchInterval: 60_000,
+  });
+}
+
+/** Applies a read or dismiss change to the cached list straight away, then refetches. */
+function useNotificationChange<T>(patientId: Id, send: (input: T) => Promise<unknown>, apply: (items: NotificationWithState[], input: T) => NotificationWithState[]) {
+  const queryClient = useQueryClient();
+  const key = queryKeys.notifications(patientId);
+  return useMutation({
+    mutationFn: send,
+    onMutate: async (input: T) => {
+      await queryClient.cancelQueries({ queryKey: key });
+      const previous = queryClient.getQueryData<NotificationWithState[]>(key);
+      queryClient.setQueryData<NotificationWithState[]>(key, (items) => items && apply(items, input));
+      return { previous };
+    },
+    onError: (_error, _input, context) => {
+      if (context?.previous) queryClient.setQueryData(key, context.previous);
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: key }),
+  });
+}
+
+export function useMarkNotificationsRead(patientId: Id) {
+  return useNotificationChange(
+    patientId,
+    (ids: string[]) => api.notifications.markRead(patientId, ids),
+    (items, ids) => items.map((item) => (ids.includes(item.id) ? { ...item, read: true } : item)),
+  );
+}
+
+export function useMarkAllNotificationsRead(patientId: Id) {
+  return useNotificationChange(
+    patientId,
+    () => api.notifications.markAllRead(patientId),
+    (items) => items.map((item) => ({ ...item, read: true })),
+  );
+}
+
+export function useDismissNotification(patientId: Id) {
+  return useNotificationChange(
+    patientId,
+    (id: string) => api.notifications.dismiss(patientId, id),
+    (items, id) => items.filter((item) => item.id !== id),
+  );
+}
+
+export function useReminderPrefs(patientId: Id) {
+  return useQuery({
+    queryKey: queryKeys.reminders(patientId),
+    queryFn: ({ signal }) => api.reminders.get(patientId, { signal }),
+  });
+}
+
+export function useUpdateReminderPrefs(patientId: Id) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (prefs: Omit<ReminderPrefs, 'patientId'>) => api.reminders.update({ ...prefs, patientId }),
+    onSuccess: (prefs) => queryClient.setQueryData(queryKeys.reminders(patientId), prefs),
+    // Reminder choices change which notifications show.
+    onSettled: () => queryClient.invalidateQueries({ queryKey: queryKeys.notifications(patientId) }),
+  });
+}
+
+export function useUpdateContact(patientId: Id) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (update: ContactUpdate) => api.patients.updateContact(patientId, update),
+    onSuccess: (patient) => queryClient.setQueryData(queryKeys.patient(patientId), patient),
+  });
+}
+
+export function useCaregivers(patientId: Id) {
+  return useQuery({
+    queryKey: queryKeys.caregivers(patientId),
+    queryFn: ({ signal }) => api.caregivers.list(patientId, { signal }),
+  });
+}
+
+function useCaregiverChange<T, R>(patientId: Id, send: (input: T) => Promise<R>) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: send,
+    onSettled: () => queryClient.invalidateQueries({ queryKey: queryKeys.caregivers(patientId) }),
+  });
+}
+
+export function useInviteCaregiver(patientId: Id) {
+  return useCaregiverChange(patientId, (invite: CaregiverInvite) => api.caregivers.invite(patientId, invite));
+}
+
+export function useUpdateCaregiverScopes(patientId: Id) {
+  return useCaregiverChange(patientId, ({ grantId, scopes }: { grantId: Id; scopes: CaregiverScope[] }) =>
+    api.caregivers.updateScopes(patientId, grantId, scopes),
+  );
+}
+
+export function useRevokeCaregiver(patientId: Id) {
+  return useCaregiverChange(patientId, (grantId: Id) => api.caregivers.revoke(patientId, grantId));
+}
+
+export function useConsents(patientId: Id) {
+  return useQuery({
+    queryKey: queryKeys.consents(patientId),
+    queryFn: ({ signal }) => api.privacy.consents(patientId, { signal }),
+  });
+}
+
+/** Flips a consent straight away and rolls back if saving fails. */
+export function useSetConsent(patientId: Id) {
+  const queryClient = useQueryClient();
+  const key = queryKeys.consents(patientId);
+  return useMutation({
+    mutationFn: ({ kind, granted }: { kind: ConsentKind; granted: boolean }) => api.privacy.setConsent(patientId, kind, granted),
+    onMutate: async ({ kind, granted }) => {
+      await queryClient.cancelQueries({ queryKey: key });
+      const previous = queryClient.getQueryData<Consent[]>(key);
+      queryClient.setQueryData<Consent[]>(key, (consents) => consents?.map((c) => (c.kind === kind ? { ...c, granted } : c)));
+      return { previous };
+    },
+    onError: (_error, _input, context) => {
+      if (context?.previous) queryClient.setQueryData(key, context.previous);
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: key }),
+  });
+}
+
+export function useAccessLog(patientId: Id) {
+  return useQuery({
+    queryKey: queryKeys.accessLog(patientId),
+    queryFn: ({ signal }) => api.privacy.accessLog(patientId, { signal }),
+  });
+}
