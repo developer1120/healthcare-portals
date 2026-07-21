@@ -77,3 +77,83 @@ function AppointmentList({ appointments, clinicians }: { appointments: Appointme
             onChange={(event) => setMode(event.target.value)}
           />
         </Field>
+        {view === 'past' && (
+          <Field label="Outcome" hideLabel>
+            <Select
+              options={(['completed', 'cancelled', 'no-show'] as const).map((status) => ({
+                value: status,
+                label: statusDisplay[status].label,
+              }))}
+              placeholder="Any outcome"
+              value={filters.status ?? ''}
+              onChange={(event) => setStatus(event.target.value)}
+            />
+          </Field>
+        )}
+      </div>
+
+      <div className="flex min-h-8 items-center justify-between gap-3">
+        <p role="status" className="text-sm text-ink-muted">
+          {countText}
+        </p>
+        {hasFilters && (
+          <Button variant="ghost" size="sm" icon={IconX} onClick={clear}>
+            Clear filters
+          </Button>
+        )}
+      </div>
+
+      {shown.length === 0 ? (
+        <Card tone="sunken" className="text-sm text-ink-muted">
+          {hasFilters
+            ? 'No visits match these filters. Try clearing them.'
+            : view === 'upcoming'
+              ? 'You have no upcoming visits.'
+              : 'Your past visits will appear here.'}
+        </Card>
+      ) : (
+        groups.map((group) => (
+          <section key={group.month} aria-labelledby={`month-${group.month}`} className="flex flex-col gap-2">
+            <h2 id={`month-${group.month}`} className="font-sans text-sm font-semibold tracking-normal text-ink-muted">
+              {group.month}
+            </h2>
+            <ul className="flex flex-col gap-2">
+              {group.appointments.map((appointment) => (
+                <AppointmentRow
+                  key={appointment.id}
+                  appointment={appointment}
+                  clinician={clinicians.find((c) => c.id === appointment.clinicianId)}
+                  upcoming={view === 'upcoming'}
+                />
+              ))}
+            </ul>
+          </section>
+        ))
+      )}
+    </div>
+  );
+}
+
+export function AppointmentsPage() {
+  const patientId = usePatientId();
+  const appointments = useAppointments(patientId);
+  const clinicians = useClinicians();
+
+  return (
+    <div className="max-w-4xl">
+      <QueryState
+        query={appointments}
+        label="your appointments"
+        loading={
+          <div className="flex flex-col gap-2">
+            {[0, 1, 2].map((i) => (
+              <Skeleton key={i} className="h-20 rounded-card" />
+            ))}
+          </div>
+        }
+      >
+        {(list) => <AppointmentList appointments={list} clinicians={clinicians.data ?? []} />}
+      </QueryState>
+    </div>
+  );
+}
