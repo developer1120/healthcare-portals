@@ -140,3 +140,145 @@ describe('cancel and reschedule endpoints', () => {
   });
 
   it('refuses a time that is not free', async () => {
+    await expect(
+      api.appointments.reschedule({
+        patientId: AVA,
+        appointmentId: VISIT,
+        start: addMinutes(new Date(await freeSlot()), 5).toISOString(),
+        mode: 'video',
+      }),
+    ).rejects.toMatchObject({ status: 409, message: 'That time was just taken. Pick another time.' });
+  });
+});
+
+describe('managing a visit', () => {
+  it('explains the free-change deadline on an upcoming visit', async () => {
+    renderRoute(`/appointments/${VISIT}`);
+    const card = await screen.findByRole('region', { name: 'Need to change this visit?' });
+    expect(card).toHaveTextContent(/Free to move or cancel until Wed 14 Oct, 10:30 \(24 hours before\)/);
+    expect(within(card).getByRole('link', { name: 'Reschedule' })).toHaveAttribute(
+      'href',
+      `/appointments/${VISIT}/reschedule`,
+    );
+  });
+
+  it('cancels through a dialog that asks for a reason', async () => {
+    const { user } = renderRoute(`/appointments/${VISIT}`);
+    await user.click(await screen.findByRole('button', { name: 'Cancel visit' }));
+
+    const dialog = screen.getByRole('dialog', { name: 'Cancel this visit?' });
+    expect(dialog).toHaveAccessibleDescription(/Medication check-in/);
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel visit' }));
+    expect(within(dialog).getByRole('combobox', { name: /Reason/ })).toHaveAccessibleDescription('Choose a reason');
+
+    await user.selectOptions(within(dialog).getByRole('combobox', { name: /Reason/ }), 'Schedule conflict');
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel visit' }));
+
+    expect(await screen.findByText('Your visit is cancelled. Your care team has been told.')).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(await screen.findByText('Cancelled', { selector: '[data-tone]' })).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Need to change this visit?' })).not.toBeInTheDocument();
+    expect(getDb().appointments.find((a) => a.id === VISIT)).toMatchObject({
+      status: 'cancelled',
+      cancellationReason: 'Schedule conflict',
+    });
+  });
+
+  it('asks for details when the reason is Other', async () => {
+    const { user } = renderRoute(`/appointments/${VISIT}`);
+    await user.click(await screen.findByRole('button', { name: 'Cancel visit' }));
+    const dialog = screen.getByRole('dialog');
+
+    await user.selectOptions(within(dialog).getByRole('combobox', { name: /Reason/ }), 'Other');
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel visit' }));
+
+    expect(within(dialog).getByRole('textbox', { name: 'Tell us more' })).toHaveAccessibleDescription(
+      'Tell us a little about why',
+    );
+  });
+
+  it('closes the dialog with Escape or Keep visit and returns focus', async () => {
+    const { user } = renderRoute(`/appointments/${VISIT}`);
+    const trigger = await screen.findByRole('button', { name: 'Cancel visit' });
+
+    await user.click(trigger);
+    expect(within(screen.getByRole('dialog')).getByRole('combobox', { name: /Reason/ })).toHaveFocus();
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+
+    await user.click(trigger);
+    await user.click(screen.getByRole('button', { name: 'Keep visit' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(getDb().appointments.find((a) => a.id === VISIT)!.status).toBe('booked');
+  });
+
+  it('keeps Tab inside the dialog', async () => {
+    const { user } = renderRoute(`/appointments/${VISIT}`);
+    await user.click(await screen.findByRole('button', { name: 'Cancel visit' }));
+    const dialog = screen.getByRole('dialog');
+
+    for (let i = 0; i < 6; i++) {
+      await user.tab();
+      expect(dialog).toContainElement(document.activeElement as HTMLElement);
+    }
+  });
+
+  it('within 24 hours: offers a phone call instead of rescheduling and bills a late cancel', async () => {
+    moveVisit(3);
+    const { user } = renderRoute(`/appointments/${VISIT}`);
+    const card = await screen.findByRole('region', { name: 'Need to change this visit?' });
+
+    expect(card).toHaveTextContent('less than 24 hours away');
+    expect(within(card).queryByRole('link', { name: 'Reschedule' })).not.toBeInTheDocument();
+    expect(within(card).getByRole('link', { name: `Call ${CLINIC_PHONE}` })).toHaveAttribute('href', 'tel:5035550100');
+
+    await user.click(within(card).getByRole('button', { name: 'Cancel visit' }));
+    const dialog = screen.getByRole('dialog');
+    await user.selectOptions(within(dialog).getByRole('combobox', { name: /Reason/ }), 'Feeling better');
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel visit' }));
+    expect(within(dialog).getByText('Confirm the fee to cancel now')).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole('checkbox', { name: /\$25\.00 fee will be added/ }));
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel visit' }));
+
+    expect(await screen.findByText(/Late cancellation: a \$25\.00 fee was added/)).toBeInTheDocument();
+  });
+
+  it('notes when the reschedule limit is reached', async () => {
+    moveVisit(72, { rescheduleCount: 2 });
+    renderRoute(`/appointments/${VISIT}`);
+    const card = await screen.findByRole('region', { name: 'Need to change this visit?' });
+    expect(card).toHaveTextContent('This visit has been moved 2 times.');
+  });
+});
+
+describe('ReschedulePage', () => {
+  it('moves a visit to a new time and confirms it', async () => {
+    const original = getDb().appointments.find((a) => a.id === VISIT)!;
+    const { user, router } = renderRoute(`/appointments/${VISIT}`);
+    await user.click(await screen.findByRole('link', { name: 'Reschedule' }));
+
+    expect(await screen.findByText(/Medication check-in with Dr. Maya Okafor/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Move visit' }));
+    expect(screen.getByText('Choose a new time.')).toBeInTheDocument();
+
+    const times = within(await screen.findByRole('group', { name: /^Time on/ })).getAllByRole('radio');
+    const slot = times[0] as HTMLInputElement;
+    await user.click(slot);
+    expect(screen.getByText(`New time: ${formatTimeRange(slot.value, 20)}`)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Move visit' }));
+
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/appointments/${VISIT}`));
+    expect(await screen.findByText('Your visit has moved. We’ve updated your reminder.')).toBeInTheDocument();
+    expect(await screen.findByText(formatTimeRange(original.start, 20))).toBeInTheDocument();
+    expect(screen.getByText('Moved from')).toBeInTheDocument();
+  });
+
+  it('explains when the visit can no longer be moved online', async () => {
+    moveVisit(2);
+    renderRoute(`/appointments/${VISIT}/reschedule`);
+    expect(await screen.findByText(/less than 24 hours away, so it can no longer be moved online/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Move visit' })).not.toBeInTheDocument();
+  });
+});
