@@ -78,3 +78,83 @@ function RescheduleForm({ appointment, clinician }: { appointment: Appointment; 
       <Card title="Choose a new time">
         <div className="flex flex-col gap-4">
           {clinician.offersVideo && (
+            <SegmentedControl<VisitMode>
+              label="Visit type"
+              value={mode}
+              onChange={setMode}
+              options={[
+                { value: 'in-person', label: modeLabels['in-person'] },
+                { value: 'video', label: modeLabels.video },
+              ]}
+              className="self-start"
+            />
+          )}
+          <QueryState query={availability} label="free times" loading={<Skeleton className="h-36 rounded-card" />}>
+            {(days) => (
+              <SlotPicker
+                clinician={clinician}
+                days={days}
+                date={date}
+                slot={slot}
+                onDateChange={(next) => {
+                  setChosenDate(next);
+                  setSlot(undefined);
+                }}
+                onSlotChange={(next) => {
+                  setSlot(next);
+                  setSlotError(undefined);
+                }}
+              />
+            )}
+          </QueryState>
+          {slotError && (
+            <p role="alert" className="text-sm font-medium text-critical">
+              {slotError}
+            </p>
+          )}
+          {reschedule.isError && (
+            <p role="alert" className="rounded-control bg-critical-soft px-3 py-2.5 text-sm text-critical-ink">
+              {errorMessage(reschedule.error)}
+            </p>
+          )}
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4">
+            <p className="text-sm text-ink-muted tabular">
+              {slot ? `New time: ${formatTimeRange(slot, appointment.durationMinutes)}` : 'Pick a day and time.'}
+            </p>
+            <Button variant="primary" icon={IconCalendarRepeat} loading={reschedule.isPending} onClick={submit}>
+              Move visit
+            </Button>
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+export function ReschedulePage() {
+  const { appointmentId } = useParams();
+  const patientId = usePatientId();
+  const appointments = useAppointments(patientId);
+  const clinicians = useClinicians();
+
+  return (
+    <div className="flex max-w-4xl flex-col gap-4">
+      <BackLink to={`/appointments/${appointmentId}`}>Back to visit</BackLink>
+      <QueryState query={appointments} label="this appointment" loading={<Skeleton className="h-64 rounded-card" />}>
+        {(list) => {
+          const appointment = list.find((a) => a.id === appointmentId);
+          const clinician = clinicians.data?.find((c) => c.id === appointment?.clinicianId);
+          if (!appointment) {
+            return (
+              <Card tone="sunken" className="text-sm text-ink-muted">
+                We couldn't find that appointment.
+              </Card>
+            );
+          }
+          if (!clinician) return <Skeleton className="h-64 rounded-card" />;
+          return <RescheduleForm appointment={appointment} clinician={clinician} />;
+        }}
+      </QueryState>
+    </div>
+  );
+}
