@@ -90,3 +90,95 @@ describe('AppointmentsPage', () => {
     await user.click(await screen.findByRole('radio', { name: 'Past (4)' }));
 
     expect(router.state.location.search).toBe('?view=past');
+    expect(screen.getByText('4 past visits')).toBeInTheDocument();
+    const reasons = ['Mole check', 'Annual physical', 'Prediabetes follow-up', 'Blood pressure review'];
+    expect(rows()).toHaveLength(reasons.length);
+    reasons.forEach((reason, i) => expect(rows()[i]).toHaveTextContent(reason));
+    expect(within(rows()[0]!).getByText('Cancelled')).toBeInTheDocument();
+  });
+
+  it('filters by clinician and clears back to everything', async () => {
+    const { user, router } = renderRoute('/appointments');
+    await user.selectOptions(await screen.findByRole('combobox', { name: 'Clinician' }), 'cln-okafor');
+
+    expect(screen.getByText('Showing 1 of 3 upcoming visits')).toBeInTheDocument();
+    expect(new URLSearchParams(router.state.location.search).get('clinician')).toBe('cln-okafor');
+
+    await user.click(screen.getByRole('button', { name: 'Clear filters' }));
+    expect(screen.getByText('3 upcoming visits')).toBeInTheDocument();
+    expect(router.state.location.search).toBe('');
+  });
+
+  it('searches by reason', async () => {
+    const { user } = renderRoute('/appointments');
+    await user.type(await screen.findByRole('searchbox', { name: 'Search appointments' }), 'flu');
+
+    expect(rows()).toHaveLength(1);
+    expect(rows()[0]).toHaveTextContent('Flu vaccine and BP check');
+  });
+
+  it('filters past visits by outcome', async () => {
+    const { user } = renderRoute('/appointments?view=past');
+    await user.selectOptions(await screen.findByRole('combobox', { name: 'Outcome' }), 'cancelled');
+    expect(screen.getByText('Showing 1 of 4 past visits')).toBeInTheDocument();
+  });
+
+  it('restores filters from the URL and explains when nothing matches', async () => {
+    renderRoute('/appointments?view=past&mode=video');
+    expect(await screen.findByText('Showing 1 of 4 past visits')).toBeInTheDocument();
+    expect(rows()[0]).toHaveTextContent('Prediabetes follow-up');
+    expect(screen.getByRole('combobox', { name: 'Visit type' })).toHaveValue('video');
+  });
+
+  it('says so when no visit matches', async () => {
+    const { user } = renderRoute('/appointments');
+    await user.type(await screen.findByRole('searchbox', { name: 'Search appointments' }), 'zzz');
+    expect(screen.getByText('No visits match these filters. Try clearing them.')).toBeInTheDocument();
+  });
+
+  it('ignores unknown filter values in the URL', async () => {
+    renderRoute('/appointments?mode=teleport&status=cancelled');
+    // status only applies to past visits, and "teleport" is not a mode.
+    expect(await screen.findByText('3 upcoming visits')).toBeInTheDocument();
+  });
+});
+
+describe('AppointmentDetailPage', () => {
+  it('opens from the list and shows preparation tips for an upcoming video visit', async () => {
+    const { user, router } = renderRoute('/appointments');
+    await user.click(await screen.findByRole('link', { name: /Medication check-in/ }));
+
+    expect(router.state.location.pathname).toBe('/appointments/apt-005');
+    expect(await screen.findByRole('heading', { level: 1, name: 'Visit with Dr. Maya Okafor' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 2, name: 'Medication check-in' })).toBeInTheDocument();
+    expect(screen.getByText('Thu 15 Oct · 10:30 – 10:50')).toBeInTheDocument();
+    const prep = screen.getByRole('region', { name: 'Before your visit' });
+    expect(prep).toHaveTextContent('Check your camera and microphone');
+    expect(screen.getByRole('link', { name: 'All appointments' })).toHaveAttribute('href', '/appointments');
+  });
+
+  it('shows the visit summary for a completed visit', async () => {
+    renderRoute('/appointments/apt-003');
+    const summary = await screen.findByRole('region', { name: 'Visit summary' });
+    expect(within(summary).getByRole('heading', { name: 'What we found' })).toBeInTheDocument();
+    expect(summary).toHaveTextContent('Blood pressure 131/84 in clinic');
+    expect(screen.getByText('Completed')).toBeInTheDocument();
+  });
+
+  it('says when no summary has been shared yet', async () => {
+    renderRoute('/appointments/apt-002');
+    expect(await screen.findByText('No summary has been shared for this visit yet.')).toBeInTheDocument();
+  });
+
+  it('explains a cancellation', async () => {
+    renderRoute('/appointments/apt-004');
+    expect(await screen.findByText(/Clinician unavailable/)).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Before your visit' })).not.toBeInTheDocument();
+  });
+
+  it('does not show another patient’s appointment', async () => {
+    // apt-008 belongs to a different patient in the seed.
+    renderRoute('/appointments/apt-008');
+    expect(await screen.findByText(/couldn't find that appointment/)).toBeInTheDocument();
+  });
+});
