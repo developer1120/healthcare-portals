@@ -138,3 +138,143 @@ function InsuranceSummary({ patientId, now }: { patientId: string; now: Date }) 
             <div className="flex flex-col gap-1 text-sm">
               <p className="font-medium">{primary.plan}</p>
               <p className="text-ink-muted tabular">
+                Member ID <span className="font-mono">{primary.memberId}</span>
+              </p>
+              <p className="text-ink-muted tabular">
+                {deductible.remainingCents === 0
+                  ? 'Deductible met for this year'
+                  : `${formatMoney(deductible.remainingCents)} left on your deductible`}
+              </p>
+            </div>
+          );
+        }}
+      </QueryState>
+      <ButtonLink to="/billing/insurance" icon={IconShieldCheck} className="mt-3">
+        Card and cost estimates
+      </ButtonLink>
+    </Card>
+  );
+}
+
+export function BillingPage() {
+  const patientId = usePatientId();
+  const statements = useStatements(patientId);
+  const plans = usePaymentPlans(patientId);
+  const methods = usePaymentMethods(patientId);
+  const now = useNow(60_000);
+  const [open, setOpen] = useState<Open>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  return (
+    <div className="flex max-w-6xl flex-col gap-5">
+      {notice && (
+        <p role="status" className="flex items-center gap-2 rounded-card bg-ok-soft px-4 py-3 text-sm text-ok-ink">
+          <IconCircleCheck aria-hidden size={18} />
+          {notice}
+        </p>
+      )}
+      <QueryState
+        query={statements}
+        label="your statements"
+        loading={
+          <>
+            <Skeleton className="h-32 rounded-card" />
+            <Skeleton className="h-64 rounded-card" />
+          </>
+        }
+      >
+        {(statementList) => (
+          <QueryState query={plans} label="your payment plans" loading={<Skeleton className="h-32 rounded-card" />}>
+            {(planList) => (
+              <>
+                <BalanceCard
+                  statements={statementList}
+                  plans={planList}
+                  methodsReady={methods.data !== undefined}
+                  now={now}
+                  onOpen={(next) => {
+                    setNotice(null);
+                    setOpen(next);
+                  }}
+                />
+                <div className="grid items-start gap-5 2xl:grid-cols-[minmax(0,1fr)_20rem]">
+                  <section aria-labelledby="statements-heading" className="flex min-w-0 flex-col gap-3">
+                    <h2 id="statements-heading" className="font-sans text-sm font-semibold tracking-normal text-ink-muted">
+                      Statements
+                    </h2>
+                    {statementList.length === 0 && <p className="text-sm text-ink-muted">You have no statements yet.</p>}
+                    {statementList.map((statement) => (
+                      <StatementCard
+                        key={statement.id}
+                        statement={statement}
+                        status={statementStatus(statement, planList, now)}
+                        methods={methods.data ?? []}
+                      />
+                    ))}
+                  </section>
+                  <div className="grid items-start gap-5 md:grid-cols-2 2xl:grid-cols-1">
+                    <PlansCard plans={planList} statements={statementList} methods={methods.data ?? []} />
+                    <InsuranceSummary patientId={patientId} now={now} />
+                    <Card title="Payment methods" description="Kept on file by the billing office.">
+                      <QueryState query={methods} label="your payment methods">
+                        {(list) =>
+                          list.length === 0 ? (
+                            <p className="text-sm text-ink-muted">No saved methods.</p>
+                          ) : (
+                            <ul className="flex flex-col gap-2 text-sm">
+                              {list.map((m) => (
+                                <li key={m.id} className="flex items-center gap-2">
+                                  <IconCreditCard aria-hidden size={18} className="text-ink-muted" />
+                                  {methodLabel(m)}
+                                </li>
+                              ))}
+                            </ul>
+                          )
+                        }
+                      </QueryState>
+                      <p className="mt-3 text-xs text-ink-muted">To add or change a method, call (503) 555-0142.</p>
+                    </Card>
+                    <Card title="Question about a bill?" description="The billing team usually replies within 2 business days.">
+                      <ButtonLink to="/messages/new?topic=billing" icon={IconMessage}>
+                        Message billing
+                      </ButtonLink>
+                    </Card>
+                  </div>
+                </div>
+              </>
+            )}
+          </QueryState>
+        )}
+      </QueryState>
+
+      {open?.kind === 'pay' && methods.data && (
+        <PayDialog
+          open
+          statement={open.statement}
+          balanceCents={open.balanceCents}
+          methods={methods.data}
+          onClose={() => setOpen(null)}
+          onPaid={(payment) => {
+            setOpen(null);
+            setNotice(`Payment of ${formatMoney(payment.amountCents)} received. Thank you.`);
+          }}
+        />
+      )}
+      {open?.kind === 'plan' && methods.data && (
+        <PlanDialog
+          open
+          statement={open.statement}
+          balanceCents={open.balanceCents}
+          methods={methods.data}
+          onClose={() => setOpen(null)}
+          onCreated={(plan) => {
+            setOpen(null);
+            setNotice(
+              `Payment plan set up: ${plan.months} monthly payments. The first ${formatMoney(plan.monthlyCents)} was taken today.`,
+            );
+          }}
+        />
+      )}
+    </div>
+  );
+}
