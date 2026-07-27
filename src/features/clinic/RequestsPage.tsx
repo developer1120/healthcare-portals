@@ -143,3 +143,149 @@ function LabCard({ item, now, canAct, onSignOff }: { item: LabItem; now: Date; c
                   {observation.value} {observation.unit}
                 </span>{' '}
                 · {flagDisplay[flag].label}
+              </StatusDot>
+            </li>
+          ))}
+        </ul>
+      )}
+    </li>
+  );
+}
+
+type Open = { kind: 'refill'; item: RefillItem } | { kind: 'lab'; item: LabItem } | null;
+
+export function RequestsPage() {
+  const clinicianId = useClinicianId();
+  const requests = useClinicRequests(clinicianId);
+  const clinicians = useClinicians();
+  const now = useNow(60_000);
+  const [params, setParams] = useSearchParams();
+  const [open, setOpen] = useState<Open>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const tab: Tab = params.get('tab') === 'labs' ? 'labs' : 'refills';
+  const scope: RequestScope = params.get('scope') === 'team' ? 'team' : 'mine';
+  const me = clinicians.data?.find((c) => c.id === clinicianId);
+  const canAct = me ? canPrescribe(me) : false;
+
+  function update(key: string, value: string | undefined) {
+    setParams(
+      (current) => {
+        const next = new URLSearchParams(current);
+        if (value) next.set(key, value);
+        else next.delete(key);
+        return next;
+      },
+      { replace: true },
+    );
+  }
+
+  return (
+    <div className="flex max-w-4xl flex-col gap-4">
+      {notice && (
+        <p role="status" className="flex items-center gap-2 rounded-card bg-ok-soft px-4 py-3 text-sm text-ok-ink">
+          <IconCircleCheck aria-hidden size={18} />
+          {notice}
+        </p>
+      )}
+      {me && !canAct && (
+        <p className="rounded-card bg-surface-sunken px-4 py-3 text-sm text-ink-muted">
+          You can see these requests, but only physicians and nurse practitioners can approve refills or sign off results.
+        </p>
+      )}
+      <QueryState query={requests} label="requests" loading={<Skeleton className="h-96 rounded-card" />}>
+        {(data) => {
+          const queues = filterQueues(data, scope, clinicianId);
+          return (
+            <>
+              <div className="flex flex-wrap items-center gap-2">
+                <SegmentedControl<Tab>
+                  label="Request type"
+                  value={tab}
+                  onChange={(next) => update('tab', next === 'labs' ? next : undefined)}
+                  options={[
+                    { value: 'refills', label: `Refills ${queues.refills.length}` },
+                    { value: 'labs', label: `Results to sign ${queues.labs.length}` },
+                  ]}
+                />
+                <SegmentedControl<RequestScope>
+                  label="Whose requests"
+                  size="sm"
+                  value={scope}
+                  onChange={(next) => update('scope', next === 'team' ? next : undefined)}
+                  options={[
+                    { value: 'mine', label: 'Mine' },
+                    { value: 'team', label: 'Care team' },
+                  ]}
+                />
+              </div>
+              {tab === 'refills' ? (
+                queues.refills.length === 0 ? (
+                  <Card tone="sunken">
+                    <p className="text-sm text-ink-muted">No refill requests waiting.</p>
+                  </Card>
+                ) : (
+                  <ol aria-label="Refill requests, oldest first" className="flex flex-col gap-3">
+                    {queues.refills.map((item) => (
+                      <RefillCard
+                        key={item.request.id}
+                        item={item}
+                        now={now}
+                        canAct={canAct}
+                        prescriber={clinicians.data?.find((c) => c.id === item.medication.prescriberId)}
+                        onDecide={() => {
+                          setNotice(null);
+                          setOpen({ kind: 'refill', item });
+                        }}
+                      />
+                    ))}
+                  </ol>
+                )
+              ) : queues.labs.length === 0 ? (
+                <Card tone="sunken">
+                  <p className="text-sm text-ink-muted">No results waiting for sign-off.</p>
+                </Card>
+              ) : (
+                <ol aria-label="Results to sign off, critical first" className="flex flex-col gap-3">
+                  {queues.labs.map((item) => (
+                    <LabCard
+                      key={item.panel.id}
+                      item={item}
+                      now={now}
+                      canAct={canAct}
+                      onSignOff={() => {
+                        setNotice(null);
+                        setOpen({ kind: 'lab', item });
+                      }}
+                    />
+                  ))}
+                </ol>
+              )}
+            </>
+          );
+        }}
+      </QueryState>
+      {open?.kind === 'refill' && (
+        <RefillDecisionDialog
+          item={open.item}
+          clinicianId={clinicianId}
+          onClose={() => setOpen(null)}
+          onDone={(message) => {
+            setOpen(null);
+            setNotice(message);
+          }}
+        />
+      )}
+      {open?.kind === 'lab' && (
+        <SignOffDialog
+          item={open.item}
+          clinicianId={clinicianId}
+          onClose={() => setOpen(null)}
+          onDone={(message) => {
+            setOpen(null);
+            setNotice(message);
+          }}
+        />
+      )}
+    </div>
+  );
+}

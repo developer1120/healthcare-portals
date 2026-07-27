@@ -87,3 +87,92 @@ export function InboxLayout() {
         const next = new URLSearchParams(current);
         if (value) next.set(key, value);
         else next.delete(key);
+        return next;
+      },
+      { replace: true },
+    );
+  }
+
+  return (
+    <div className="grid gap-5 lg:h-[calc(100dvh-9.5rem)] lg:grid-cols-[24rem_minmax(0,1fr)]">
+      <section
+        aria-label="Conversations"
+        className={cx('min-h-0 min-w-0 flex-col gap-3', threadId ? 'hidden lg:flex' : 'flex')}
+      >
+        <div className="flex flex-wrap gap-2">
+          <SegmentedControl<InboxScope>
+            label="Whose messages"
+            size="sm"
+            value={scope}
+            onChange={(next) => update('scope', next === 'team' ? next : undefined)}
+            options={[
+              { value: 'mine', label: 'Assigned to me' },
+              { value: 'team', label: 'Care team' },
+            ]}
+          />
+          <SegmentedControl<InboxStatus>
+            label="Which messages"
+            size="sm"
+            value={status}
+            onChange={(next) => update('status', next === 'all' ? next : undefined)}
+            options={[
+              { value: 'needs-reply', label: 'Needs reply' },
+              { value: 'all', label: 'All' },
+            ]}
+          />
+        </div>
+        <QueryState
+          query={inbox}
+          label="your inbox"
+          loading={
+            <div className="flex flex-col gap-2">
+              {[0, 1, 2].map((i) => (
+                <Skeleton key={i} className="h-24 rounded-card" />
+              ))}
+            </div>
+          }
+        >
+          {(items) => {
+            const shown = filterInbox(sortInbox(items, now), { scope, status }, clinicianId);
+            return shown.length === 0 ? (
+              <p className="rounded-card border border-dashed border-line-strong p-6 text-center text-sm text-ink-muted">
+                {status === 'needs-reply' ? 'Nothing waiting for a reply.' : 'No conversations.'}
+              </p>
+            ) : (
+              <ol aria-label="Messages by priority" className="-mr-1 flex min-h-0 flex-col gap-2 overflow-y-auto pr-1">
+                {shown.map((item) => (
+                  <InboxRow
+                    key={item.thread.id}
+                    item={item}
+                    selected={item.thread.id === threadId}
+                    search={search}
+                    now={now}
+                    assignee={
+                      item.thread.assigneeId === clinicianId
+                        ? undefined
+                        : clinicians.data?.find((c) => c.id === item.thread.assigneeId)?.name
+                    }
+                  />
+                ))}
+              </ol>
+            );
+          }}
+        </QueryState>
+      </section>
+      <div className={cx('min-h-0 min-w-0 flex-col', threadId ? 'flex' : 'hidden lg:flex')}>
+        <Suspense fallback={<PaneSkeleton />}>
+          <Outlet />
+        </Suspense>
+      </div>
+    </div>
+  );
+}
+
+export function NoInboxThreadSelected() {
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-card border border-dashed border-line-strong p-8 text-center text-sm text-ink-muted">
+      <IconInbox aria-hidden size={28} stroke={1.5} />
+      Choose a conversation. The most urgent are at the top.
+    </div>
+  );
+}

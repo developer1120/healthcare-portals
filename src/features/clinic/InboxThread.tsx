@@ -131,3 +131,137 @@ function Conversation({ item, clinicianId, clinicians }: { item: InboxItem; clin
   const triage = triageThread(item, now);
   const level = triageDisplay[triage.level];
   const risk = riskLevelDisplay[assessRisk(snapshot, now).level];
+  const name = `${patient.preferredName ?? patient.firstName} ${patient.lastName}`;
+  const unread = isUnreadForClinician(thread);
+  const { mutate: markThreadRead } = markRead;
+
+  useEffect(() => {
+    if (unread) markThreadRead(thread.id);
+  }, [unread, thread.id, markThreadRead]);
+
+  const authorName = (authorId: string) =>
+    authorId === patient.id ? name : authorId === clinicianId ? 'You' : (clinicians.find((c) => c.id === authorId)?.name ?? 'Care team');
+
+  return (
+    <Card padded={false} className="flex min-h-0 flex-1 flex-col">
+      <header className="flex flex-col gap-3 border-b border-line px-4 py-4 sm:px-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-lg">{thread.subject}</h2>
+            <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-sm text-ink-muted">
+              <Link to={`/clinic/patients/${patient.id}`} className="font-medium text-ink hover:underline">
+                {name}
+              </Link>
+              <span className="tabular">
+                {ageOn(patient.dateOfBirth, now)} · {patient.mrn}
+              </span>
+              <StatusDot tone={risk.tone}>{risk.label} risk</StatusDot>
+              <span>· {categoryLabels[thread.category]}</span>
+            </p>
+          </div>
+          <Reassign item={item} clinicianId={clinicianId} clinicians={clinicians} />
+        </div>
+        {triage.needsReply && (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
+            <StatusDot tone={level.tone}>
+              <span className="font-semibold">{level.label}</span>
+            </StatusDot>
+            {triage.reasons.map((reason) => (
+              <span key={reason} className="text-ink-muted">
+                {reason}
+              </span>
+            ))}
+            {triage.level !== 'emergency' && (
+              <Button
+                size="sm"
+                variant="ghost"
+                icon={IconCircleCheck}
+                className="ml-auto"
+                loading={close.isPending}
+                onClick={() => close.mutate(thread.id)}
+              >
+                No reply needed
+              </Button>
+            )}
+          </div>
+        )}
+        {triage.needsReply && triage.level === 'emergency' && (
+          <div
+            role="alert"
+            className="flex items-start gap-2.5 rounded-control border border-critical/40 bg-critical-soft px-3 py-2.5 text-sm text-critical-ink"
+          >
+            <IconAlertTriangle aria-hidden size={18} className="mt-px shrink-0" />
+            <p>
+              This message suggests an emergency. Call the patient now rather than replying here:{' '}
+              <a href={`tel:${patient.phone.replace(/[^\d+]/g, '')}`} className="inline-flex items-center gap-1 font-semibold underline">
+                <IconPhone aria-hidden size={14} />
+                {patient.phone}
+              </a>
+              .
+            </p>
+          </div>
+        )}
+      </header>
+      {/* Focusable so keyboard users can scroll a long conversation. */}
+      <ol aria-label="Messages" tabIndex={0} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4 sm:px-5">
+        {thread.messages.map((message) => {
+          const mine = message.authorId === clinicianId;
+          const fromPatient = message.authorId === patient.id;
+          return (
+            <li key={message.id} className={cx('flex flex-col gap-1', fromPatient ? 'items-start' : 'items-end')}>
+              <span className="text-xs text-ink-muted">
+                {authorName(message.authorId)} · {formatDay(message.sentAt, now)}, {formatTime(message.sentAt)}
+              </span>
+              <div
+                className={cx(
+                  'max-w-[85%] rounded-[16px] px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap sm:max-w-[75%]',
+                  fromPatient
+                    ? 'rounded-bl-[6px] border border-line bg-surface'
+                    : cx('rounded-br-[6px]', mine ? 'bg-rail text-white' : 'bg-surface-sunken'),
+                )}
+              >
+                {message.body}
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+      <div className="px-4 pb-4 sm:px-5">
+        <ReplyBox key={thread.id} item={item} clinicianId={clinicianId} />
+      </div>
+    </Card>
+  );
+}
+
+export function InboxThread() {
+  const { threadId } = useParams();
+  const location = useLocation();
+  const clinicianId = useClinicianId();
+  const inbox = useClinicInbox(clinicianId);
+  const clinicians = useClinicians();
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
+      <Link
+        to={`/clinic/inbox${location.search}`}
+        className="inline-flex items-center gap-1.5 self-start text-sm font-medium text-ink-muted hover:text-ink lg:hidden"
+      >
+        <IconArrowLeft aria-hidden size={16} />
+        Inbox
+      </Link>
+      <QueryState query={inbox} label="this conversation" loading={<Skeleton className="h-96 rounded-card" />}>
+        {(items) => {
+          const item = items.find((i) => i.thread.id === threadId);
+          if (!item) {
+            return (
+              <Card title="Conversation not found" tone="sunken">
+                <p className="text-sm text-ink-muted">It may belong to a patient who isn’t on your care team.</p>
+              </Card>
+            );
+          }
+          return <Conversation item={item} clinicianId={clinicianId} clinicians={clinicians.data ?? []} />;
+        }}
+      </QueryState>
+    </div>
+  );
+}
