@@ -76,3 +76,81 @@ function LineTable({ statement }: { statement: Statement }) {
     </div>
   );
 }
+
+interface StatementCardProps {
+  statement: Statement;
+  status: StatementStatus;
+  methods: PaymentMethod[];
+}
+
+export function StatementCard({ statement, status, methods }: StatementCardProps) {
+  const totals = statementTotals(statement);
+  const display = statementStatusDisplay[status];
+  const title = `${format(toDate(statement.issuedAt), 'MMMM yyyy')} statement`;
+
+  const summary = (
+    <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm sm:grid-cols-4">
+      <div>
+        <dt className="text-xs text-ink-muted">Issued</dt>
+        <dd className="tabular">{formatShortDate(statement.issuedAt)}</dd>
+      </div>
+      <div>
+        <dt className="text-xs text-ink-muted">Due</dt>
+        <dd className="tabular">{formatShortDate(statement.dueOn)}</dd>
+      </div>
+      <div>
+        <dt className="text-xs text-ink-muted">Paid</dt>
+        <dd className="tabular">{formatMoney(totals.paid)}</dd>
+      </div>
+      <div>
+        <dt className="text-xs text-ink-muted">Balance</dt>
+        <dd className="font-semibold tabular">{formatMoney(totals.balance)}</dd>
+      </div>
+    </dl>
+  );
+
+  const details = (
+    <>
+      <LineTable statement={statement} />
+      {statement.payments.length > 0 && (
+        <div className="mt-4">
+          <h4 className="text-sm font-semibold">Payments</h4>
+          <ul className="mt-1.5 divide-y divide-line text-sm">
+            {statement.payments.map((payment) => {
+              const method = methods.find((m) => m.id === payment.methodId);
+              return (
+                <li key={payment.id} className="flex flex-wrap justify-between gap-x-4 gap-y-0.5 py-1.5">
+                  <span>
+                    {formatShortDate(payment.paidAt)} · {paymentKinds[payment.method]}
+                    {method && <span className="text-ink-muted"> · {methodLabel(method)}</span>}
+                  </span>
+                  <span className="font-medium tabular">{formatMoney(payment.amountCents)}</span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+    </>
+  );
+
+  return (
+    <Card
+      title={title}
+      headingLevel={3}
+      action={<StatusDot tone={display.tone}>{display.label}</StatusDot>}
+    >
+      <div className="flex flex-col gap-4">
+        {summary}
+        {status === 'paid' ? (
+          <details className="group">
+            <summary className="cursor-pointer text-sm font-medium text-data-ink">Show charges and payments</summary>
+            <div className="mt-3">{details}</div>
+          </details>
+        ) : (
+          details
+        )}
+      </div>
+    </Card>
+  );
+}

@@ -112,3 +112,118 @@ describe('billing endpoints', () => {
     await expect(pay(0)).rejects.toMatchObject({ status: 400 });
     await expect(pay(50)).rejects.toMatchObject({ status: 400 });
     await expect(pay(10.5)).rejects.toMatchObject({ status: 400 });
+    await expect(pay(1_000, { methodId: 'pm-someone-else' })).rejects.toMatchObject({ status: 400 });
+    await expect(pay(1_000, { patientId: 'pat-other' })).rejects.toMatchObject({ status: 404 });
+    await expect(pay(1_000, { statementId: 'stm-2026-08' })).rejects.toMatchObject({ status: 409 });
+    expect(statement('stm-2026-10').payments).toHaveLength(0);
+  });
+
+  it('sets up a plan, takes the first instalment and completes it when paid off', async () => {
+    const request = { patientId: AVA, statementId: 'stm-2026-10', months: 3, methodId: 'pm-bank', agreed: true };
+    const created = await api.billing.createPlan(request);
+    expect(created).toMatchObject({ months: 3, monthlyCents: 2_034, totalCents: 6_100, status: 'active' });
+    expect(statement('stm-2026-10').payments).toEqual([
+      expect.objectContaining({ amountCents: 2_034, method: 'plan-instalment', methodId: 'pm-bank' }),
+    ]);
+    expect(paymentTask().completedAt).toBeDefined();
+    await expect(api.billing.plans(AVA)).resolves.toHaveLength(1);
+
+    await expect(api.billing.createPlan(request)).rejects.toMatchObject({ status: 409 });
+
+    await pay(4_066);
+    expect(getDb().paymentPlans[0]!.status).toBe('completed');
+  });
+
+  it('only accepts the plans on offer, with agreement', async () => {
+    const request = { patientId: AVA, statementId: 'stm-2026-10', methodId: 'pm-card', agreed: true };
+    await expect(api.billing.createPlan({ ...request, months: 12 })).rejects.toMatchObject({ status: 400 });
+    await expect(api.billing.createPlan({ ...request, months: 3, agreed: false })).rejects.toMatchObject({ status: 400 });
+    await expect(api.billing.createPlan({ ...request, statementId: 'stm-2026-08', months: 3 })).rejects.toMatchObject({
+      status: 400,
+    });
+    expect(getDb().paymentPlans).toHaveLength(0);
+  });
+});
+
+describe('billing page', () => {
+  const balanceCard = () => screen.findByRole('region', { name: 'Account balance' });
+
+  it('shows the balance, the due date and each statement', async () => {
+    renderRoute('/billing');
+    const balance = await balanceCard();
+    expect(balance).toHaveTextContent('You owe $61.00');
+    expect(balance).toHaveTextContent(/in 20 days/);
+
+    const october = await screen.findByRole('region', { name: 'October 2026 statement' });
+    expect(within(october).getByText('Payment due')).toBeInTheDocument();
+    expect(within(october).getByRole('table', { name: 'Charges on this statement' })).toBeInTheDocument();
+    expect(within(october).getByRole('row', { name: /Totals/ })).toHaveTextContent('$61.00');
+
+    const august = screen.getByRole('region', { name: 'August 2026 statement' });
+    expect(august.querySelector('[data-tone="ok"]')).toHaveTextContent('Paid');
+    // Paid statements keep their detail folded away.
+    expect(within(august).getByText('Show charges and payments')).toBeInTheDocument();
+
+    expect(screen.getByRole('link', { name: 'Message billing' })).toHaveAttribute('href', '/messages/new?topic=billing');
+  });
+
+  it('pays the full balance with a saved card', async () => {
+    const { user } = renderRoute('/billing');
+    await user.click(within(await balanceCard()).getByRole('button', { name: 'Pay now' }));
+
+    const dialog = screen.getByRole('dialog', { name: 'Make a payment' });
+    // Saved methods only: there is nowhere to type a card number.
+    expect(within(dialog).queryAllByRole('textbox')).toHaveLength(0);
+    expect(within(dialog).getByRole('radio', { name: /Visa ending 4242/ })).toBeChecked();
+    await user.click(within(dialog).getByRole('button', { name: 'Pay $61.00' }));
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Payment of $61.00 received. Thank you.');
+    expect(await screen.findByText('You’re all paid up')).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('checks a part payment against the balance', async () => {
+    const { user } = renderRoute('/billing');
+    await user.click(within(await balanceCard()).getByRole('button', { name: 'Pay now' }));
+    const dialog = screen.getByRole('dialog', { name: 'Make a payment' });
+
+    await user.click(within(dialog).getByRole('radio', { name: /Another amount/ }));
+    const amount = within(dialog).getByRole('textbox', { name: 'Amount to pay' });
+    await user.type(amount, '70');
+    await user.click(within(dialog).getByRole('button', { name: 'Pay' }));
+    expect(within(dialog).getByText('That’s more than the $61.00 you owe.')).toBeInTheDocument();
+    expect(amount).toHaveAttribute('aria-invalid', 'true');
+
+    await user.clear(amount);
+    await user.type(amount, '20');
+    await user.click(within(dialog).getByRole('radio', { name: /Checking ending 6789/ }));
+    await user.click(within(dialog).getByRole('button', { name: 'Pay $20.00' }));
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Payment of $20.00 received.');
+    expect(await balanceCard()).toHaveTextContent('You owe $41.00');
+    expect(statement('stm-2026-10').payments.at(-1)).toMatchObject({ amountCents: 2_000, methodId: 'pm-bank' });
+  });
+
+  it('sets up a payment plan after agreement', async () => {
+    const { user } = renderRoute('/billing');
+    await user.click(within(await balanceCard()).getByRole('button', { name: 'Set up a payment plan' }));
+    const dialog = screen.getByRole('dialog', { name: 'Set up a payment plan' });
+
+    expect(within(dialog).getAllByRole('radio', { name: /months/ })).toHaveLength(2);
+    expect(within(dialog).getByRole('radio', { name: /3 months/ })).toBeChecked();
+    await user.click(within(dialog).getByRole('button', { name: 'Start plan' }));
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('Agree to automatic payments');
+    expect(getDb().paymentPlans).toHaveLength(0);
+
+    await user.click(within(dialog).getByRole('checkbox', { name: /I agree to automatic monthly payments/ }));
+    await user.click(within(dialog).getByRole('button', { name: 'Start plan' }));
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Payment plan set up: 3 monthly payments');
+    const balance = await balanceCard();
+    expect(await within(balance).findByText(/Next plan payment \$20\.34/)).toBeInTheDocument();
+    expect(within(balance).queryByRole('button', { name: 'Pay now' })).not.toBeInTheDocument();
+    expect(await screen.findByText('On a payment plan')).toBeInTheDocument();
+    const plans = screen.getByRole('region', { name: 'Payment plans' });
+    expect(plans).toHaveTextContent('1 of 3 paid · $40.66 left');
+  });
+});
