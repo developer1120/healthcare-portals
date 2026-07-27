@@ -75,3 +75,80 @@ function ChartHeader({ chart, clinicians, now }: { chart: PatientChart; clinicia
         <section aria-label="Risk" className="w-full rounded-control bg-surface-sunken px-3 py-2.5 sm:w-64">
           <StatusDot tone={level.tone}>
             <span className="font-semibold text-ink">{level.label} risk</span>
+            <span className="tabular"> · {risk.score}</span>
+          </StatusDot>
+          {risk.factors.length > 0 ? (
+            <ul className="mt-1.5 flex flex-col gap-0.5 text-xs text-ink-muted">
+              {risk.factors.map((factor) => (
+                <li key={factor.key} className="flex justify-between gap-2">
+                  <span>{factor.label}</span>
+                  <span className="tabular">+{factor.points}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-1 text-xs text-ink-muted">Nothing flagged.</p>
+          )}
+        </section>
+      </div>
+    </Card>
+  );
+}
+
+function Chart({ chart, clinicians, now }: { chart: PatientChart; clinicians: Clinician[]; now: Date }) {
+  usePageHeading(displayName(chart));
+  const clinician = (id: string) => clinicians.find((c) => c.id === id);
+  return (
+    <>
+      <ChartHeader chart={chart} clinicians={clinicians} now={now} />
+      <AllergyBanner chart={chart} />
+      <div className="grid items-start gap-4 xl:grid-cols-2">
+        <div className="flex flex-col gap-4">
+          <ProblemList chart={chart} />
+          <MedicationList chart={chart} clinician={clinician} now={now} />
+        </div>
+        <div className="flex flex-col gap-4">
+          <VitalsSummary chart={chart} now={now} />
+          <LabList chart={chart} clinician={clinician} />
+          <VisitList chart={chart} clinician={clinician} now={now} />
+        </div>
+      </div>
+    </>
+  );
+}
+
+export function ChartPage() {
+  const { patientId = '' } = useParams();
+  const clinicianId = useClinicianId();
+  const location = useLocation();
+  const chart = usePatientChart(clinicianId, patientId);
+  const clinicians = useClinicians();
+  const now = useNow(60_000);
+  const rosterSearch = (location.state as ChartLinkState | null)?.rosterSearch ?? '';
+
+  return (
+    <div className="flex max-w-6xl flex-col gap-4">
+      <BackLink to={`/clinic/patients${rosterSearch}`}>Patients</BackLink>
+      {isApiError(chart.error) && chart.error.status === 404 && !chart.data ? (
+        <Card title="Patient not found" tone="sunken">
+          <p className="text-sm text-ink-muted">
+            This patient doesn’t exist or isn’t on your care team. Charts are only open to the patient’s care team.
+          </p>
+        </Card>
+      ) : (
+        <QueryState
+          query={chart}
+          label="this chart"
+          loading={
+            <>
+              <Skeleton className="h-36 rounded-card" />
+              <Skeleton className="h-64 rounded-card" />
+            </>
+          }
+        >
+          {(data) => <Chart chart={data} clinicians={clinicians.data ?? []} now={now} />}
+        </QueryState>
+      )}
+    </div>
+  );
+}
