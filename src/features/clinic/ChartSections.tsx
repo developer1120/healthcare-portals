@@ -126,3 +126,132 @@ export function LabList({ chart, clinician }: { chart: PatientChart; clinician: 
                   {clinician(panel.orderedById) && ` · ${clinician(panel.orderedById)!.name}`}
                 </span>
                 {panel.status !== 'pending' &&
+                  (flagged.length === 0 ? (
+                    <span className="text-ink-muted">All in range</span>
+                  ) : (
+                    <ul className="flex flex-col gap-0.5">
+                      {flagged.map(({ observation, flag }) => (
+                        <li key={observation.code} className="flex items-baseline justify-between gap-3">
+                          <span>{observation.name}</span>
+                          <StatusDot tone={flagTone(flag)}>
+                            <span className="tabular">
+                              {observation.value} {observation.unit}
+                            </span>{' '}
+                            · {flagDisplay[flag].label}
+                          </StatusDot>
+                        </li>
+                      ))}
+                    </ul>
+                  ))}
+                {panel.clinicianNote && <span className="text-xs text-ink-muted italic">“{panel.clinicianNote}”</span>}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </Card>
+  );
+}
+
+export function VitalsSummary({ chart, now }: { chart: PatientChart; now: Date }) {
+  const bp = chart.latestBloodPressure;
+  const heartRate = latestHeartRate(chart);
+  const trend = recentBloodPressure(chart, 90, now);
+  const bpAssessment = bp && assessBloodPressure(bp.systolic, bp.diastolic);
+  const hrAssessment = heartRate && assessHeartRate(heartRate.bpm);
+
+  return (
+    <Card title="Vitals" headingLevel={2}>
+      <dl className="grid grid-cols-2 gap-4 text-sm">
+        <div>
+          <dt className="text-xs text-ink-muted">Blood pressure</dt>
+          {bp && bpAssessment ? (
+            <dd>
+              <span className="block font-display text-xl font-semibold tabular">
+                {bp.systolic}/{bp.diastolic}
+              </span>
+              <StatusDot tone={bpAssessment.tone}>{bpAssessment.label}</StatusDot>
+              <span className="block text-xs text-ink-muted">
+                {relativeDay(bp.takenAt, now)} · {bp.source}
+              </span>
+            </dd>
+          ) : (
+            <dd className="text-ink-muted">None recorded</dd>
+          )}
+        </div>
+        <div>
+          <dt className="text-xs text-ink-muted">Heart rate</dt>
+          {heartRate && hrAssessment ? (
+            <dd>
+              <span className="block font-display text-xl font-semibold tabular">{heartRate.bpm} bpm</span>
+              <StatusDot tone={hrAssessment.tone}>{hrAssessment.label}</StatusDot>
+              <span className="block text-xs text-ink-muted">{relativeDay(heartRate.takenAt, now)}</span>
+            </dd>
+          ) : (
+            <dd className="text-ink-muted">None recorded</dd>
+          )}
+        </div>
+      </dl>
+      {trend.length >= 3 && (
+        <div className="mt-4">
+          <p className="text-xs text-ink-muted">Blood pressure, last 90 days ({trend.length} readings)</p>
+          <Sparkline
+            series={[
+              { values: trend.map((r) => r.systolic), color: 'var(--mw-data)' },
+              { values: trend.map((r) => r.diastolic), color: 'var(--mw-ink-subtle)' },
+            ]}
+            threshold={SYSTOLIC_TARGET.high}
+            markLast
+            className="mt-1 h-20"
+            label={`Systolic from ${trend[0]!.systolic} to ${trend.at(-1)!.systolic} over ${trend.length} readings in the last 90 days.`}
+          />
+        </div>
+      )}
+    </Card>
+  );
+}
+
+export function VisitList({ chart, clinician, now }: { chart: PatientChart; clinician: Lookup; now: Date }) {
+  const next = nextAppointment(chart.appointments, now);
+  const past = pastVisits(chart.appointments, now);
+  const describe = (clinicianId: string) => clinician(clinicianId)?.name ?? 'Unknown clinician';
+
+  return (
+    <Card title="Visits" headingLevel={2}>
+      <div className="flex flex-col gap-3 text-sm">
+        <div>
+          <h3 className="font-sans text-xs font-medium tracking-normal text-ink-muted">Next</h3>
+          {next ? (
+            <p className="mt-0.5">
+              <span className="font-medium tabular">
+                {formatDay(next.start, now)}, {formatTime(next.start)}
+              </span>{' '}
+              · {describe(next.clinicianId)} · {modeLabels[next.mode]}
+              <span className="block text-ink-muted">{next.reason}</span>
+            </p>
+          ) : (
+            <p className="mt-0.5 text-ink-muted">Nothing booked.</p>
+          )}
+        </div>
+        <div>
+          <h3 className="font-sans text-xs font-medium tracking-normal text-ink-muted">Recent</h3>
+          {past.length === 0 ? (
+            <p className="mt-0.5 text-ink-muted">No past visits.</p>
+          ) : (
+            <ul className="mt-0.5 divide-y divide-line">
+              {past.map((visit) => (
+                <li key={visit.id} className="flex flex-wrap items-baseline justify-between gap-x-3 py-1.5">
+                  <span>
+                    <span className="tabular">{formatShortDate(visit.start)}</span> · {visit.reason}
+                    <span className="block text-xs text-ink-muted">{describe(visit.clinicianId)}</span>
+                  </span>
+                  <StatusDot tone={statusDisplay[visit.status].tone}>{statusDisplay[visit.status].label}</StatusDot>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    </Card>
+  );
+}
