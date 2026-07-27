@@ -86,3 +86,91 @@ describe('roster endpoint', () => {
   });
 
   it('summarises the chart: active conditions, latest BP, pending refills', async () => {
+    const ava = await snapshotOf('pat-ava');
+    expect(ava.conditions.every((c) => c.status === 'active')).toBe(true);
+    expect(ava.conditions.map((c) => c.code)).not.toContain('M72.2');
+    expect(ava.latestBloodPressure).toMatchObject({ systolic: 128, diastolic: 82 });
+    const marcus = await snapshotOf('pat-marcus');
+    expect(marcus.pendingRefills.map((r) => r.id)).toEqual(['rfl-002']);
+  });
+});
+
+describe('roster page', () => {
+  const patientNames = () =>
+    within(screen.getByRole('table')).getAllByRole('rowheader').map((cell) => cell.querySelector('p')!.textContent);
+
+  it('lists the panel highest risk first, with reasons', async () => {
+    renderRoute('/clinic/patients', { as: 'clinician' });
+    await screen.findByRole('table');
+    expect(patientNames()).toEqual([
+      'Ruth Gallagher',
+      'Grace Whitfield',
+      'Marcus Bell',
+      'Ethan Cole',
+      'Ava Thompson',
+      'Mei Chen',
+      'Dev Kapoor',
+      'Kai Nakamura',
+      'Lucía Navarro',
+      'Noor Rahman',
+    ]);
+    expect(screen.getByRole('status')).toHaveTextContent('10 patients');
+
+    const ruth = screen.getByRole('row', { name: /Ruth Gallagher/ });
+    expect(within(ruth).getByText('High')).toBeInTheDocument();
+    expect(within(ruth).getByRole('list', { name: 'Reasons' })).toHaveTextContent('BP 172/98');
+    expect(within(ruth).getByText('172/98')).toBeInTheDocument();
+    expect(within(screen.getByRole('row', { name: /Noor Rahman/ })).getByText('Nothing flagged')).toBeInTheDocument();
+  });
+
+  it('filters by risk level and flags, keeping them in the URL', async () => {
+    const { user, router } = renderRoute('/clinic/patients', { as: 'clinician' });
+    await screen.findByRole('table');
+
+    const levels = screen.getByRole('group', { name: 'Risk level' });
+    expect(within(levels).getByRole('radio', { name: 'Rising 3' })).toBeInTheDocument();
+    await user.click(within(levels).getByRole('radio', { name: 'High 2' }));
+    expect(patientNames()).toEqual(['Ruth Gallagher', 'Grace Whitfield']);
+    expect(screen.getByRole('status')).toHaveTextContent('2 of 10 patients');
+    expect(router.state.location.search).toBe('?risk=high');
+
+    await user.click(within(levels).getByRole('radio', { name: 'All 10' }));
+    const flags = screen.getByRole('group', { name: 'Show patients with any of' });
+    await user.click(within(flags).getByRole('button', { name: 'Missed visit' }));
+    expect(within(flags).getByRole('button', { name: 'Missed visit' })).toHaveAttribute('aria-pressed', 'true');
+    await user.click(within(flags).getByRole('button', { name: 'Labs to review' }));
+    expect(patientNames()).toEqual(['Ruth Gallagher', 'Marcus Bell', 'Ava Thompson']);
+    // Level counts follow the other filters.
+    expect(within(levels).getByRole('radio', { name: 'High 1' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Clear filters' }));
+    expect(patientNames()).toHaveLength(10);
+    expect(router.state.location.search).toBe('');
+  });
+
+  it('searches by name ignoring accents, and says when nothing matches', async () => {
+    const { user } = renderRoute('/clinic/patients', { as: 'clinician' });
+    const search = await screen.findByRole('searchbox', { name: 'Search patients' });
+    await user.type(search, 'lucia');
+    expect(patientNames()).toEqual(['Lucía Navarro']);
+    await user.clear(search);
+    await user.type(search, 'zzz');
+    expect(screen.getByText('No patients match these filters.')).toBeInTheDocument();
+  });
+
+  it('restores filters and sort from the URL', async () => {
+    renderRoute('/clinic/patients?risk=rising&sort=name', { as: 'clinician' });
+    await screen.findByRole('table');
+    expect(patientNames()).toEqual(['Marcus Bell', 'Ethan Cole', 'Ava Thompson']);
+    expect(screen.getByRole('combobox', { name: 'Sort by' })).toHaveValue('name');
+  });
+
+  it('narrows to primary-care patients', async () => {
+    signInAs('clinician', { subjectId: 'cln-okafor', displayName: 'Dr. Maya Okafor' });
+    const { user } = renderRoute('/clinic/patients', { as: null });
+    await screen.findByRole('table');
+    expect(patientNames()).toHaveLength(7);
+    await user.click(screen.getByRole('radio', { name: 'Primary care' }));
+    expect(patientNames()).toEqual(['Samir Haddad', 'Oluwaseun Adeyemi']);
+  });
+});
