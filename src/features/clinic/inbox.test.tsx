@@ -91,3 +91,96 @@ describe('inbox endpoints', () => {
 
   it('closes a thread until the patient writes again', async () => {
     await api.clinic.closeThread({ clinicianId: ME, threadId: 'thr-dizzy' });
+    expect(triageThread(await itemFor('thr-dizzy'), now).needsReply).toBe(false);
+
+    vi.setSystemTime(new Date(now.getTime() + 60_000));
+    await api.threads.reply({ patientId: 'pat-ava', threadId: 'thr-dizzy', body: 'One more question, sorry.' });
+    expect(triageThread(await itemFor('thr-dizzy'), new Date()).needsReply).toBe(true);
+  });
+});
+
+describe('inbox page', () => {
+  const rows = () => within(screen.getByRole('list', { name: 'Messages by priority' })).getAllByRole('listitem');
+
+  it('lists what needs a reply, most urgent first, with an unread badge on the rail', async () => {
+    renderRoute('/clinic/inbox', { as: 'clinician' });
+    await screen.findByRole('list', { name: 'Messages by priority' });
+    expect(rows().map((r) => r.querySelector('a')!.textContent)).toEqual([
+      expect.stringMatching(/^Unread: Ethan Cole.*Worst headache of my life.*Emergency.*Possible emergency/),
+      expect.stringMatching(/^Unread: Ruth Gallagher.*Urgent.*Mentions a fall, dizziness/),
+      expect.stringMatching(/^Mei Chen.*Today.*Overdue/),
+      expect.stringMatching(/^Marcus Bell/),
+      expect.stringMatching(/^Unread: Kai Nakamura.*Routine/),
+      expect.stringMatching(/^Unread: Lucía Navarro/),
+    ]);
+    expect(screen.getByRole('link', { name: 'Inbox, 4 unread' })).toBeInTheDocument();
+    expect(screen.getByText(/The most urgent are at the top/)).toBeInTheDocument();
+  });
+
+  it('shows the care team’s messages and replied ones on request', async () => {
+    const { user } = renderRoute('/clinic/inbox', { as: 'clinician' });
+    await screen.findByRole('list', { name: 'Messages by priority' });
+    await user.click(screen.getByRole('radio', { name: 'Care team' }));
+    expect(rows()).toHaveLength(8);
+    expect(within(rows()[5]!).getByText('→ Rosa Delgado')).toBeInTheDocument();
+    await user.click(screen.getByRole('radio', { name: 'All' }));
+    expect(screen.getByRole('link', { name: /Grace Whitfield.*Replied/ })).toBeInTheDocument();
+  });
+
+  it('opens an emergency with a call-now prompt and marks it read', async () => {
+    const { user } = renderRoute('/clinic/inbox', { as: 'clinician' });
+    await user.click(await screen.findByRole('link', { name: /Ethan Cole/ }));
+    expect(await screen.findByRole('heading', { name: 'Worst headache of my life' })).toBeInTheDocument();
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent('Call the patient now');
+    const phone = getDb().patients.find((p) => p.id === 'pat-ethan')!.phone;
+    expect(within(alert).getByRole('link', { name: phone })).toHaveAttribute('href', `tel:${phone.replace(/\D/g, '')}`);
+    expect(screen.queryByRole('button', { name: 'No reply needed' })).not.toBeInTheDocument();
+
+    await waitFor(() => expect(screen.getByRole('link', { name: 'Inbox, 3 unread' })).toBeInTheDocument());
+    expect(getDb().threads.find((t) => t.id === 'thr-ethan-headache')!.clinicianReadAt).toBeDefined();
+  });
+
+  it('replies with a quick reply, which clears it from needs reply', async () => {
+    const { user } = renderRoute('/clinic/inbox/thr-lucia-inhaler', { as: 'clinician' });
+    const box = await screen.findByRole('textbox', { name: 'Reply to Lucía' });
+    await user.click(screen.getByRole('button', { name: 'Send reply' }));
+    expect(screen.getByText('Write a reply before sending.')).toBeInTheDocument();
+
+    await user.click(within(screen.getByRole('group', { name: 'Quick replies' })).getByRole('button', { name: 'Refill sent' }));
+    expect(box).toHaveValue('I’ve sent the refill to your pharmacy. It’s usually ready within a day.');
+    expect(box).toHaveFocus();
+    await user.click(screen.getByRole('button', { name: 'Send reply' }));
+
+    const messages = screen.getByRole('list', { name: 'Messages' });
+    expect(await within(messages).findByText('I’ve sent the refill to your pharmacy. It’s usually ready within a day.')).toBeInTheDocument();
+    expect(within(messages).getAllByText(/^You · /)).toHaveLength(1);
+    expect(box).toHaveValue('');
+    await waitFor(() => expect(rows()).toHaveLength(5));
+  });
+
+  it('clears a thank-you without replying', async () => {
+    const { user } = renderRoute('/clinic/inbox/thr-dizzy?scope=team', { as: 'clinician' });
+    await user.click(await screen.findByRole('button', { name: 'No reply needed' }));
+    await waitFor(() => expect(rows()).toHaveLength(7));
+    expect(screen.queryByRole('button', { name: 'No reply needed' })).not.toBeInTheDocument();
+  });
+
+  it('reassigns a conversation', async () => {
+    const { user } = renderRoute('/clinic/inbox/thr-ruth-fall', { as: 'clinician' });
+    const select = await screen.findByRole('combobox', { name: 'Assigned to' });
+    expect(within(select).getAllByRole('option').map((o) => o.textContent)).toEqual([
+      'Jonas Lindqvist (you)',
+      'Dr. Maya Okafor',
+      'Rosa Delgado',
+    ]);
+    await user.selectOptions(select, 'Rosa Delgado');
+    await waitFor(() => expect(rows()).toHaveLength(5));
+    expect(getDb().threads.find((t) => t.id === 'thr-ruth-fall')!.assigneeId).toBe('cln-delgado');
+  });
+
+  it('does not open conversations outside the care team', async () => {
+    renderRoute('/clinic/inbox/thr-nope', { as: 'clinician' });
+    expect(await screen.findByRole('heading', { name: 'Conversation not found' })).toBeInTheDocument();
+  });
+});
