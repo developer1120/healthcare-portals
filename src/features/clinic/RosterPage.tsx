@@ -132,3 +132,138 @@ function RosterTable({ rows, now }: { rows: RosterRow[]; now: Date }) {
           })}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+export function RosterPage() {
+  const clinicianId = useClinicianId();
+  const roster = useRoster(clinicianId);
+  const now = useNow(60_000);
+  const { filters, hasFilters, setQuery, setLevel, toggleFactor, setScope, setSort, clear } = useRosterFilters();
+
+  return (
+    <div className="flex max-w-7xl flex-col gap-4">
+      <QueryState
+        query={roster}
+        label="your patients"
+        loading={<Skeleton className="h-96 rounded-card" />}
+      >
+        {(snapshots) => {
+          const rows = rosterRows(snapshots, now);
+          const beforeLevel = filterRosterExceptLevel(rows, filters, clinicianId);
+          const count = (level: RiskLevel) => beforeLevel.filter((r) => r.risk.level === level).length;
+          const shown = filterRoster(rows, filters, clinicianId);
+          const factorsInPanel = (Object.keys(riskFactorLabels) as RiskFactorKey[]).filter(
+            (key) => filters.factors.includes(key) || rows.some((r) => r.risk.factors.some((f) => f.key === key)),
+          );
+
+          return (
+            <>
+              <Card padded={false} className="flex flex-col gap-4 p-4 sm:p-5">
+                <div className="flex flex-wrap items-end gap-3">
+                  <Field label="Search patients" hideLabel className="min-w-56 flex-1">
+                    <div className="relative">
+                      <IconSearch
+                        aria-hidden
+                        size={16}
+                        className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-ink-subtle"
+                      />
+                      <Input
+                        type="search"
+                        placeholder="Name or MRN"
+                        value={filters.query}
+                        onChange={(event) => setQuery(event.target.value)}
+                        className="pl-9"
+                      />
+                    </div>
+                  </Field>
+                  <SegmentedControl<RosterScope>
+                    label="Whose patients"
+                    value={filters.scope}
+                    onChange={setScope}
+                    options={[
+                      { value: 'care-team', label: 'Care team' },
+                      { value: 'primary', label: 'Primary care' },
+                    ]}
+                  />
+                  <Field label="Sort by" className="w-40">
+                    <Select
+                      value={filters.sort}
+                      onChange={(event) => setSort(event.target.value as RosterSort)}
+                      options={[
+                        { value: 'risk', label: 'Highest risk' },
+                        { value: 'name', label: 'Name' },
+                        { value: 'next-visit', label: 'Next visit' },
+                      ]}
+                    />
+                  </Field>
+                </div>
+                <SegmentedControl<RiskLevel | 'all'>
+                  label="Risk level"
+                  value={filters.level}
+                  onChange={setLevel}
+                  className="self-start"
+                  options={[
+                    { value: 'all', label: `All ${beforeLevel.length}` },
+                    { value: 'high', label: `High ${count('high')}` },
+                    { value: 'rising', label: `Rising ${count('rising')}` },
+                    { value: 'routine', label: `Routine ${count('routine')}` },
+                  ]}
+                />
+                <div role="group" aria-label="Show patients with any of" className="flex flex-wrap items-center gap-1.5">
+                  <span aria-hidden="true" className="mr-1 text-xs text-ink-muted">
+                    Show patients with any of
+                  </span>
+                  {factorsInPanel.map((key) => {
+                    const on = filters.factors.includes(key);
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        aria-pressed={on}
+                        onClick={() => toggleFactor(key)}
+                        className={cx(
+                          'h-7 rounded-full border px-3 text-xs font-medium transition-colors',
+                          on
+                            ? 'border-ink bg-ink text-canvas'
+                            : 'border-line bg-surface text-ink-muted hover:border-line-strong hover:text-ink',
+                        )}
+                      >
+                        {riskFactorLabels[key]}
+                      </button>
+                    );
+                  })}
+                  {hasFilters && (
+                    <Button size="sm" variant="ghost" icon={IconX} onClick={clear} className="ml-auto">
+                      Clear filters
+                    </Button>
+                  )}
+                </div>
+              </Card>
+
+              <Card padded={false} className="px-4 pb-1 sm:px-5">
+                <p role="status" className="py-3 text-sm text-ink-muted">
+                  {shown.length === rows.length
+                    ? `${rows.length} patients`
+                    : `${shown.length} of ${rows.length} patients`}
+                </p>
+                {shown.length === 0 ? (
+                  <p className="border-t border-line py-8 text-center text-sm text-ink-muted">
+                    No patients match these filters.
+                  </p>
+                ) : (
+                  <RosterTable rows={shown} now={now} />
+                )}
+              </Card>
+              <p className="text-xs text-ink-muted">
+                Risk adds up flagged items such as critical or unreviewed labs, blood pressure, A1c, missed visits, age
+                and number of conditions. It helps order the list and is not a clinical prediction.
+              </p>
+            </>
+          );
+        }}
+      </QueryState>
+    </div>
+  );
+}

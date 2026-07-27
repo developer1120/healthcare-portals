@@ -126,3 +126,131 @@ function GapRow({ gap }: { gap: Gap }) {
         Open {formatTime(gap.start)}–{formatTime(gap.end)}
       </span>
     </li>
+  );
+}
+
+function NowLine({ now }: { now: Date }) {
+  return (
+    <li aria-hidden="true" className="relative flex items-center gap-2 px-4 py-1 text-2xs font-semibold text-accent-ink sm:px-5">
+      <span className="tabular">Now {formatTime(now)}</span>
+      <span className="h-px flex-1 bg-accent" />
+    </li>
+  );
+}
+
+type Row = { kind: 'visit'; entry: ScheduleEntry; at: Date } | { kind: 'gap'; gap: Gap; at: Date };
+
+function DayList({ schedule, day, now, clinicianId }: { schedule: DaySchedule; day: Date; now: Date; clinicianId: string }) {
+  const rows: Row[] = [
+    ...schedule.entries.map((entry) => ({ kind: 'visit' as const, entry, at: toDate(entry.appointment.start) })),
+    ...scheduleGaps(schedule.clinician, schedule.entries.map((e) => e.appointment), day).map((gap) => ({
+      kind: 'gap' as const,
+      gap,
+      at: gap.start,
+    })),
+  ].sort((a, b) => a.at.getTime() - b.at.getTime());
+  const today = isSameDay(day, now);
+  // The "now" line goes before the first row that starts after now.
+  const nowIndex = today ? rows.findIndex((r) => r.at > now) : -1;
+  const showNowAtEnd = today && nowIndex === -1 && rows.length > 0;
+
+  return (
+    <ol aria-label="Schedule">
+      {rows.map((row, index) => (
+        <Fragment key={row.kind === 'visit' ? row.entry.appointment.id : `gap-${row.at.toISOString()}`}>
+          {index === nowIndex && <NowLine now={now} />}
+          {row.kind === 'visit' ? (
+            <VisitRow entry={row.entry} now={now} clinicianId={clinicianId} />
+          ) : (
+            <GapRow gap={row.gap} />
+          )}
+        </Fragment>
+      ))}
+      {showNowAtEnd && <NowLine now={now} />}
+    </ol>
+  );
+}
+
+function NextUpCard({ entry, now }: { entry: ScheduleEntry; now: Date }) {
+  const waiting = waitingMinutes(entry.appointment, now);
+  return (
+    <Card tone="pine" role="region" aria-label="Next up">
+      <p className="text-xs">{waiting !== null ? `Waiting ${waiting} min` : `Next up at ${formatTime(entry.appointment.start)}`}</p>
+      <p className="mt-1 text-lg font-semibold text-white">
+        <Link to={`/clinic/patients/${entry.snapshot.patient.id}`} className="hover:underline">
+          {patientName(entry)}
+        </Link>
+      </p>
+      <p className="text-sm text-white/90">
+        {entry.appointment.reason} · {modeLabels[entry.appointment.mode]}
+      </p>
+    </Card>
+  );
+}
+
+export function SchedulePage() {
+  const clinicianId = useClinicianId();
+  const now = useNow(30_000);
+  const { day, go } = useScheduleDate(now);
+  const schedule = useSchedule(clinicianId, toIsoDate(day));
+  const today = isSameDay(day, now);
+  // The rail calls this page "Today"; on other days the title follows.
+  usePageHeading(today ? null : 'Schedule');
+
+  return (
+    <div className="flex max-w-5xl flex-col gap-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <IconButton icon={IconChevronLeft} label="Previous day" onClick={() => go(addDays(day, -1))} />
+        <h2 className="min-w-48 text-center text-lg">
+          {format(day, 'EEEE d MMMM')}
+          {today && <span className="ml-2 align-middle text-xs font-sans font-medium text-ink-muted">Today</span>}
+        </h2>
+        <IconButton icon={IconChevronRight} label="Next day" onClick={() => go(addDays(day, 1))} />
+        {!today && (
+          <Button size="sm" variant="ghost" onClick={() => go(now)}>
+            Back to today
+          </Button>
+        )}
+      </div>
+      <QueryState query={schedule} label="the schedule" loading={<Skeleton className="h-96 rounded-card" />}>
+        {(data) => {
+          const summary = scheduleSummary(data.entries);
+          const next = today ? nextUp(data.entries, now) : undefined;
+          if (data.entries.length === 0) {
+            return (
+              <Card tone="sunken">
+                <p className="text-sm text-ink-muted">
+                  {isWorkingDay(data.clinician, day) ? 'No visits booked on this day.' : 'No clinic on this day.'}
+                </p>
+              </Card>
+            );
+          }
+          return (
+            <>
+              <dl aria-label="Day summary" className="flex flex-wrap gap-2 text-sm">
+                {(
+                  [
+                    ['Visits', summary.visits],
+                    ['Waiting', summary.waiting],
+                    ['Done', summary.done],
+                    ['Missed', summary.missed],
+                    ['To go', summary.toGo],
+                  ] as const
+                ).map(([label, value]) => (
+                  <div key={label} className="flex items-baseline gap-1.5 rounded-control bg-surface px-3 py-1.5">
+                    <dt className="text-ink-muted">{label}</dt>
+                    <dd className="font-semibold tabular">{value}</dd>
+                  </div>
+                ))}
+              </dl>
+              {next && <NextUpCard entry={next} now={now} />}
+              <Card padded={false}>
+                <DayList schedule={data} day={day} now={now} clinicianId={clinicianId} />
+              </Card>
+            </>
+          );
+        }}
+      </QueryState>
+    </div>
+  );
+}
