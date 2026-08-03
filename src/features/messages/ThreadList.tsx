@@ -75,3 +75,80 @@ export function ThreadList({ patientId, selectedId }: { patientId: string; selec
         if (value) next.set(key, value);
         else next.delete(key);
         return next;
+      },
+      { replace: true },
+    );
+  }
+
+  return (
+    <section aria-label="Conversations" className="flex min-h-0 flex-1 flex-col gap-3">
+      <QueryState
+        query={threads}
+        label="your messages"
+        loading={
+          <div className="flex flex-col gap-2">
+            {[0, 1, 2].map((i) => (
+              <Skeleton key={i} className="h-20 rounded-card" />
+            ))}
+          </div>
+        }
+      >
+        {(list) => {
+          const shown = filterThreads(list, view, query, clinicians.data);
+          const unread = unreadCount(list);
+          return (
+            <>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <SegmentedControl<InboxView>
+                  label="Show"
+                  size="sm"
+                  value={view}
+                  onChange={(next) => update('view', next === 'inbox' ? '' : next)}
+                  options={[
+                    { value: 'inbox', label: 'Inbox' },
+                    { value: 'unread', label: unread ? `Unread (${unread})` : 'Unread' },
+                    { value: 'archived', label: 'Archived' },
+                  ]}
+                />
+                <ButtonLink to="/messages/new" variant="primary" size="sm" icon={IconPencilPlus}>
+                  New message
+                </ButtonLink>
+              </div>
+              <Field label="Search messages" hideLabel>
+                <Input
+                  type="search"
+                  placeholder="Subject, words or clinician"
+                  value={query}
+                  onChange={(event) => update('q', event.target.value)}
+                />
+              </Field>
+              {shown.length === 0 ? (
+                <p className="rounded-card bg-surface-sunken p-4 text-sm text-ink-muted">
+                  {query
+                    ? 'No conversations match your search.'
+                    : view === 'unread'
+                      ? 'You’re all caught up.'
+                      : view === 'archived'
+                        ? 'Archived conversations will appear here.'
+                        : 'Messages from your care team will appear here.'}
+                </p>
+              ) : (
+                <ul className="-mx-1 flex min-h-0 flex-col gap-1 overflow-y-auto px-1">
+                  {shown.map((thread) => (
+                    <ThreadItem
+                      key={thread.id}
+                      thread={thread}
+                      clinician={clinicians.data?.find((c) => c.id === thread.assigneeId)}
+                      selected={thread.id === selectedId}
+                      search={search}
+                    />
+                  ))}
+                </ul>
+              )}
+            </>
+          );
+        }}
+      </QueryState>
+    </section>
+  );
+}
