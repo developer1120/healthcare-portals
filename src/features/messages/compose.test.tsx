@@ -106,3 +106,111 @@ describe('create endpoint', () => {
     });
     await expect(api.threads.create({ ...request, subject: ' ' })).rejects.toMatchObject({ message: 'Add a subject.' });
     await expect(
+      api.threads.create({ ...request, attachments: [{ name: 'x.zip', sizeBytes: 5, mimeType: 'application/zip' }] }),
+    ).rejects.toMatchObject({ status: 400 });
+  });
+});
+
+describe('ComposePage', () => {
+  it('opens from the inbox with the primary clinician pre-selected', async () => {
+    const { user, router } = renderRoute('/messages');
+    await user.click(await screen.findByRole('link', { name: 'New message' }));
+
+    expect(router.state.location.pathname).toBe('/messages/new');
+    expect(await screen.findByRole('heading', { level: 1, name: 'New message' })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: /Medical question/ })).toBeChecked();
+    expect(screen.getByRole('combobox', { name: /^To/ })).toHaveValue('cln-lindqvist');
+  });
+
+  it('routes by topic', async () => {
+    const { user } = renderRoute('/messages/new');
+    await user.click(await screen.findByRole('radio', { name: /Test results/ }));
+    const to = screen.getByRole('combobox', { name: /^To/ });
+    expect(to).toHaveValue('cln-delgado');
+    expect(to).toHaveAccessibleDescription(/Rosa Delgado reviews results questions first/);
+
+    await user.click(screen.getByRole('radio', { name: /Billing/ }));
+    expect(screen.queryByRole('combobox', { name: /^To/ })).not.toBeInTheDocument();
+    expect(screen.getByText('Leah Brooks · Patient services')).toBeInTheDocument();
+    expect(screen.getByText('Billing and insurance questions go to Patient services.')).toBeInTheDocument();
+  });
+
+  it('asks for a subject and a message', async () => {
+    const { user } = renderRoute('/messages/new');
+    await user.click(await screen.findByRole('button', { name: 'Send message' }));
+    expect(screen.getByRole('textbox', { name: /Subject/ })).toHaveAccessibleDescription('Add a subject');
+    expect(screen.getByRole('textbox', { name: /Message/ })).toHaveAccessibleDescription(/Write your message/);
+  });
+
+  it('sends a message with an attachment and opens the new conversation', async () => {
+    const { user, router } = renderRoute('/messages/new');
+    await user.selectOptions(await screen.findByRole('combobox', { name: /^To/ }), 'cln-okafor');
+    await user.type(screen.getByRole('textbox', { name: /Subject/ }), 'Ankle swelling');
+    await user.type(screen.getByRole('textbox', { name: /Message/ }), 'Both ankles swell by evening.');
+    await user.upload(screen.getByLabelText('Choose files to attach'), file('ankle.jpg', 900_000, 'image/jpeg'));
+
+    const attached = screen.getByRole('list', { name: 'Attached files' });
+    expect(attached).toHaveTextContent('ankle.jpg879 KB');
+
+    await user.click(screen.getByRole('button', { name: 'Send message' }));
+
+    await waitFor(() => expect(router.state.location.pathname).toMatch(/^\/messages\/thr-/));
+    expect(await screen.findByText(/Message sent to Dr. Maya Okafor/)).toBeInTheDocument();
+    const messages = screen.getByRole('list', { name: 'Messages' });
+    expect(within(messages).getByText('ankle.jpg')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 2, name: 'Ankle swelling' })).toBeInTheDocument();
+  });
+
+  it('refuses unsupported files and lets you remove attached ones', async () => {
+    const user = userEvent.setup({ applyAccept: false });
+    renderRoute('/messages/new');
+    const input = await screen.findByLabelText('Choose files to attach');
+
+    await user.upload(input, [file('setup.exe', 100, 'application/x-msdownload'), file('bp-log.pdf')]);
+    expect(screen.getByRole('alert')).toHaveTextContent('setup.exe isn’t a PDF or photo');
+    expect(screen.getByRole('list', { name: 'Attached files' })).toHaveTextContent('bp-log.pdf');
+
+    await user.click(screen.getByRole('button', { name: 'Remove bp-log.pdf' }));
+    expect(screen.queryByRole('list', { name: 'Attached files' })).not.toBeInTheDocument();
+  });
+
+  it('points to 911 or 988 when the message sounds urgent', async () => {
+    const { user } = renderRoute('/messages/new');
+    const body = await screen.findByRole('textbox', { name: /Message/ });
+
+    await user.type(body, 'I have had chest pain since this morning');
+    expect(screen.getByRole('alert')).toHaveTextContent('If this is an emergency, call 911 now.');
+
+    await user.clear(body);
+    await user.type(body, 'I keep thinking about how to end my life');
+    expect(screen.getByRole('alert')).toHaveTextContent('call or text 988');
+  });
+
+  it('can be prefilled from a link', async () => {
+    renderRoute('/messages/new?topic=refill&to=cln-okafor&subject=Lisinopril%20refill');
+    expect(await screen.findByRole('radio', { name: /Prescription/ })).toBeChecked();
+    expect(screen.getByRole('combobox', { name: /^To/ })).toHaveValue('cln-okafor');
+    expect(screen.getByRole('textbox', { name: /Subject/ })).toHaveValue('Lisinopril refill');
+  });
+
+  it('ignores a prefilled recipient the topic does not allow', async () => {
+    renderRoute('/messages/new?to=cln-sato');
+    expect(await screen.findByRole('combobox', { name: /^To/ })).toHaveValue('cln-lindqvist');
+  });
+});
+
+describe('replying with attachments', () => {
+  it('sends files with a reply', async () => {
+    const { user } = renderRoute('/messages/thr-dizzy');
+    await user.type(await screen.findByRole('textbox', { name: /Reply to/ }), 'This week’s log attached.');
+    await user.upload(screen.getByLabelText('Choose files to attach'), file('bp-log-week-7.pdf'));
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+
+    await waitFor(() =>
+      expect(getDb().threads.find((t) => t.id === 'thr-dizzy')!.messages.at(-1)!.attachments[0]?.name).toBe(
+        'bp-log-week-7.pdf',
+      ),
+    );
+    expect(screen.queryByRole('list', { name: 'Attached files' })).not.toBeInTheDocument();
+  });
+});
