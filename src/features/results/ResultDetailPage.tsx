@@ -110,3 +110,115 @@ function ObservationTrend({ observation, panels }: { observation: LabObservation
               <thead>
                 <tr className="border-b border-line text-left text-xs text-ink-muted">
                   <th scope="col" className="py-2 font-medium">Date</th>
+                  <th scope="col" className="py-2 font-medium">Result</th>
+                  <th scope="col" className="py-2 font-medium">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-line">
+                {[...history].reverse().map((point) => (
+                  <tr key={point.panelId}>
+                    <td className="py-2">{formatShortDate(point.collectedAt)}</td>
+                    <td className="py-2 tabular">
+                      {formatValue(point.value)} {point.unit}
+                    </td>
+                    <td className="py-2">
+                      <StatusDot tone={flagDisplay[point.flag].tone}>{flagDisplay[point.flag].label}</StatusDot>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function ResultDetail({ panel, panels, orderedBy }: { panel: LabPanel; panels: LabPanel[]; orderedBy?: Clinician }) {
+  const markViewed = useMarkResultsViewed(panel.patientId);
+  usePageHeading(panel.name);
+
+  useEffect(() => {
+    if (isNewResult(panel)) markViewed.mutate([panel.id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per panel
+  }, [panel.id]);
+
+  const askLink = `/messages/new?${new URLSearchParams({
+    topic: 'results',
+    subject: `Question about my ${panel.name.toLowerCase()} results`,
+  })}`;
+
+  return (
+    <div className="flex flex-col gap-4">
+      <Card>
+        <div className="flex flex-wrap items-start justify-between gap-3 text-sm">
+          <div>
+            <p>
+              Collected {formatShortDate(panel.collectedAt)}
+              {orderedBy && ` · Ordered by ${orderedBy.name}`}
+            </p>
+            <p className="text-ink-muted">
+              {panel.status === 'pending'
+                ? 'Waiting for the lab. Most results are ready in 1–3 days.'
+                : panel.status === 'reviewed' && panel.reviewedAt
+                  ? `Reviewed ${formatShortDate(panel.reviewedAt)}`
+                  : 'Not reviewed by your clinician yet'}
+            </p>
+          </div>
+          {panel.status !== 'pending' && (
+            <Link
+              to={askLink}
+              className="inline-flex items-center gap-1.5 font-medium text-ink-muted hover:text-ink hover:underline"
+            >
+              <IconMessageQuestion aria-hidden size={16} stroke={1.75} />
+              Ask about this result
+            </Link>
+          )}
+        </div>
+        {panel.clinicianNote && (
+          <figure className="mt-3 rounded-control bg-data-soft px-3 py-2.5 text-sm text-data-ink">
+            <blockquote>{panel.clinicianNote}</blockquote>
+            <figcaption className="mt-1 text-xs">{orderedBy?.name ?? 'Your clinician'}</figcaption>
+          </figure>
+        )}
+      </Card>
+
+      {panel.observations.map((observation) => (
+        <ObservationTrend key={observation.code} observation={observation} panels={panels} />
+      ))}
+    </div>
+  );
+}
+
+export function ResultDetailPage() {
+  const { panelId } = useParams();
+  const patientId = usePatientId();
+  const labs = useLabPanels(patientId);
+  const clinicians = useClinicians();
+
+  return (
+    <div className="flex max-w-4xl flex-col gap-4">
+      <BackLink to="/results">All results</BackLink>
+      <QueryState query={labs} label="this result" loading={<Skeleton className="h-72 rounded-card" />}>
+        {(panels) => {
+          const panel = panels.find((p) => p.id === panelId);
+          if (!panel) {
+            return (
+              <Card tone="sunken" className="text-sm text-ink-muted">
+                We couldn't find that result. It may have been removed, or the link may be wrong.
+              </Card>
+            );
+          }
+          return (
+            <ResultDetail
+              panel={panel}
+              panels={panels}
+              orderedBy={clinicians.data?.find((c) => c.id === panel.orderedById)}
+            />
+          );
+        }}
+      </QueryState>
+    </div>
+  );
+}
