@@ -75,3 +75,81 @@ describe('ResultsPage', () => {
     renderRoute('/results');
     expect(await screen.findByText(/3 new results since you last looked/)).toBeInTheDocument();
 
+    const headings = within(screen.getByRole('main')).getAllByRole('heading', { level: 2 });
+    expect(headings.slice(0, 4).map((h) => h.textContent)).toEqual([
+      'Vitamin D, 25-hydroxy',
+      'Hemoglobin A1cNew',
+      'Lipid panelNew',
+      'Basic metabolic panelNew',
+    ]);
+    expect(panel(/^Vitamin D, 25-hydroxy/)).toHaveTextContent('Most results are ready in 1–3 days.');
+  });
+
+  it('shows each value against its range in words, not only colour', async () => {
+    renderRoute('/results');
+    await screen.findByText(/new results since you last looked/);
+    const lipids = within(screen.getAllByRole('table', { name: 'Lipid panel results' })[0]!);
+    const ldl = lipids.getByRole('rowheader', { name: /LDL cholesterol/ }).closest('tr')!;
+
+    expect(ldl).toHaveTextContent('142 mg/dL');
+    expect(ldl).toHaveTextContent('< 100 mg/dL');
+    expect(within(ldl).getByText('High')).toHaveAttribute('data-tone', 'warn');
+    expect(ldl).toHaveTextContent('The “bad” cholesterol');
+    // The dot sits past the end of the normal band.
+    const marker = within(ldl).getByTestId('range-marker');
+    const band = marker.previousElementSibling as HTMLElement;
+    expect(parseFloat(marker.style.left)).toBeGreaterThan(parseFloat(band.style.left) + parseFloat(band.style.width));
+  });
+
+  it('marks results seen on opening, keeping the badges for this visit', async () => {
+    renderRoute('/results');
+    await screen.findByText(/new results since you last looked/);
+
+    await waitFor(() => expect(getDb().labPanels.filter((p) => p.patientId === AVA && isNewResult(p))).toHaveLength(0));
+    expect(getDb().tasks.find((t) => t.kind === 'read-result')!.completedAt).toBeDefined();
+    expect(within(screen.getByRole('main')).getAllByText('New')).toHaveLength(3);
+  });
+
+  it('shows the clinician’s note once reviewed, and explains when there isn’t one yet', async () => {
+    renderRoute('/results');
+    await screen.findByText(/new results since you last looked/);
+
+    expect(screen.getByText('In the prediabetes range. Let’s start metformin and recheck in three months.')).toBeInTheDocument();
+    expect(within(panel(/^Hemoglobin A1c/)).getByText(/hasn’t added a note yet/)).toBeInTheDocument();
+  });
+
+  it('links to a message about the result', async () => {
+    renderRoute('/results');
+    await screen.findByText(/new results since you last looked/);
+    const ask = within(panel(/^Lipid panel/)).getByRole('link', { name: 'Ask about this result' });
+    expect(ask).toHaveAttribute(
+      'href',
+      '/messages/new?topic=results&subject=Question+about+my+lipid+panel+results',
+    );
+  });
+
+  it('filters to results outside range or still waiting, and searches by test', async () => {
+    const { user } = renderRoute('/results');
+    await user.click(await screen.findByRole('radio', { name: 'Outside range (7)' }));
+    expect(within(screen.getByRole('main')).getAllByRole('heading', { level: 2 })).toHaveLength(7);
+
+    await user.click(screen.getByRole('radio', { name: 'Waiting' }));
+    expect(within(screen.getByRole('main')).getAllByRole('heading', { level: 2 }).map((h) => h.textContent)).toEqual([
+      'Vitamin D, 25-hydroxy',
+    ]);
+
+    await user.click(screen.getByRole('radio', { name: 'All' }));
+    await user.type(screen.getByRole('searchbox', { name: 'Search results' }), 'potassium');
+    expect(within(screen.getByRole('main')).getAllByRole('heading', { level: 2 })).toHaveLength(2);
+  });
+
+  it('raises an alert for a critical value', async () => {
+    writeDb((db) => {
+      const bmp = db.labPanels.find((p) => p.patientId === AVA && p.name === 'Basic metabolic panel')!;
+      bmp.observations.find((o) => o.name === 'Potassium')!.value = 6.6;
+    });
+    renderRoute('/results');
+    expect(await screen.findByRole('alert')).toHaveTextContent('needs prompt attention');
+    expect(screen.getByText('Critically high')).toHaveAttribute('data-tone', 'critical');
+  });
+});
