@@ -108,3 +108,114 @@ function Allergies({ allergies, patientId }: { allergies: Allergy[]; patientId: 
         }}
       />
     </Card>
+  );
+}
+
+function Conditions({ conditions }: { conditions: Condition[] }) {
+  const active = conditions.filter((c) => c.status === 'active').sort((a, b) => b.onset.localeCompare(a.onset));
+  const resolved = conditions.filter((c) => c.status === 'resolved');
+  return (
+    <Card title="Conditions">
+      {active.length === 0 ? (
+        <p className="text-sm text-ink-muted">No ongoing conditions.</p>
+      ) : (
+        <ul className="divide-y divide-line">
+          {active.map((condition) => (
+            <li key={condition.id} className="flex items-start justify-between gap-3 py-2.5">
+              <div>
+                <p className="text-sm font-medium">{condition.name}</p>
+                <p className="text-xs text-ink-muted">Since {format(parseISO(condition.onset), 'MMM yyyy')}</p>
+              </div>
+              <span className="shrink-0 font-mono text-xs text-ink-muted" title="Diagnosis code (ICD-10)">
+                {condition.code}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {resolved.length > 0 && (
+        <details className="mt-3">
+          <summary className="cursor-pointer text-sm font-medium text-ink-muted">Past conditions ({resolved.length})</summary>
+          <ul className="mt-2 flex flex-col gap-1.5">
+            {resolved.map((condition) => (
+              <li key={condition.id} className="text-sm">
+                {condition.name}{' '}
+                <span className="text-xs text-ink-muted">
+                  {format(parseISO(condition.onset), 'MMM yyyy')} –{' '}
+                  {condition.resolvedOn ? format(parseISO(condition.resolvedOn), 'MMM yyyy') : '?'}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </Card>
+  );
+}
+
+function Immunizations({ immunizations, primaryId }: { immunizations: Immunization[]; primaryId: string }) {
+  return (
+    <Card title="Immunizations">
+      <ul className="divide-y divide-line">
+        {sortImmunizations(immunizations).map((immunization) => {
+          const status = immunizationStatus(immunization);
+          const display = immunizationDisplay[status];
+          const due = dueDate(immunization);
+          return (
+            <li key={immunization.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
+              <div className="flex items-start gap-3">
+                <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-control bg-data-soft text-data-ink">
+                  <IconVaccine aria-hidden size={16} stroke={1.75} />
+                </span>
+                <div>
+                  <p className="text-sm font-medium">
+                    {immunization.vaccine}
+                    {immunization.dose && <span className="font-normal text-ink-muted"> · {immunization.dose}</span>}
+                  </p>
+                  <p className="text-xs text-ink-muted">
+                    Last given {formatShortDate(immunization.givenOn)}
+                    {due && ` · next due ${formatShortDate(due)}`}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <StatusDot tone={display.tone}>{display.label}</StatusDot>
+                {(status === 'overdue' || status === 'due-soon') && (
+                  <ButtonLink to={`/appointments/book?clinician=${primaryId}`} size="sm" icon={IconCalendarPlus}>
+                    Book
+                  </ButtonLink>
+                )}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </Card>
+  );
+}
+
+export function HealthRecordPage() {
+  const patientId = usePatientId();
+  const patient = usePatient(patientId);
+  const record = useHealthRecord(patientId);
+
+  return (
+    <div className="flex max-w-6xl flex-col gap-5">
+      <QueryState query={patient} label="your details" loading={<Skeleton className="h-36 rounded-card" />}>
+        {(me) => <PatientSummary patient={me} />}
+      </QueryState>
+      <QueryState query={record} label="your health record" loading={<Skeleton className="h-64 rounded-card" />}>
+        {({ allergies, conditions, immunizations }) => (
+          <>
+            <div className="grid gap-5 lg:grid-cols-2 lg:items-start">
+              <Allergies allergies={allergies} patientId={patientId} />
+              <Conditions conditions={conditions} />
+            </div>
+            <Immunizations immunizations={immunizations} primaryId={patient.data?.primaryClinicianId ?? ''} />
+            <DocumentsCard patientId={patientId} />
+          </>
+        )}
+      </QueryState>
+    </div>
+  );
+}
