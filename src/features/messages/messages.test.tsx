@@ -104,3 +104,109 @@ describe('Messages page', () => {
     // Ava wrote last in the dizziness thread; the care team did in the others.
     expect(links[2]).toHaveTextContent('You:');
     expect(links[1]).not.toHaveTextContent('You:');
+    expect(screen.getByText('Choose a conversation to read it.')).toBeInTheDocument();
+  });
+
+  it('shows the unread count on the Messages link in the rail', async () => {
+    renderRoute('/messages');
+    const nav = screen.getByRole('navigation', { name: 'Primary' });
+    expect(await within(nav).findByRole('link', { name: 'Messages, 1 unread' })).toBeInTheDocument();
+  });
+
+  it('opens a conversation, marks it read and clears the badge', async () => {
+    const { user, router } = renderRoute('/messages');
+    await user.click(await conversations().findByRole('link', { name: /Your lab results are ready/ }));
+
+    expect(router.state.location.pathname).toBe('/messages/thr-results');
+    expect(screen.getByRole('heading', { level: 2, name: 'Your lab results are ready' })).toBeInTheDocument();
+    expect(screen.getByText('Test results · With Rosa Delgado')).toBeInTheDocument();
+    expect(within(screen.getByRole('list', { name: 'Messages' })).getByText(/HbA1c, lipid panel/)).toBeInTheDocument();
+
+    const nav = screen.getByRole('navigation', { name: 'Primary' });
+    await waitFor(() => expect(within(nav).getByRole('link', { name: 'Messages' })).toBeInTheDocument());
+    await waitFor(() => expect(getDb().threads.find((t) => t.id === 'thr-results')!.patientReadAt).toBeDefined());
+    expect(conversations().getByRole('link', { name: /Your lab results are ready/ })).toHaveAttribute('aria-current', 'page');
+  });
+
+  it('shows the conversation with dates, authors and attachments', async () => {
+    renderRoute('/messages/thr-dizzy');
+    const messages = await screen.findByRole('list', { name: 'Messages' });
+
+    expect(within(messages).getAllByText(/^You · /)).toHaveLength(2);
+    expect(within(messages).getByText(/^Dr. Maya Okafor · Cardiology · /)).toBeInTheDocument();
+    expect(within(messages).getByText('bp-log-week-6.pdf')).toBeInTheDocument();
+    expect(within(messages).getByText('178 KB')).toBeInTheDocument();
+  });
+
+  it('sends a reply and shows it at the end of the conversation', async () => {
+    const { user } = renderRoute('/messages/thr-dizzy');
+    const box = await screen.findByRole('textbox', { name: 'Reply to Dr. Maya Okafor' });
+
+    await user.type(box, 'The dizziness has stopped this week.');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+
+    const messages = screen.getByRole('list', { name: 'Messages' });
+    await waitFor(() => expect(within(messages).getAllByRole('listitem').at(-1)).toHaveTextContent('The dizziness has stopped'));
+    expect(box).toHaveValue('');
+    // The replied thread moves to the top of the list.
+    const first = (await threadLinks())[0]!;
+    await waitFor(() => expect(first).toHaveTextContent('Lightheaded in the mornings'));
+  });
+
+  it('sends with Ctrl+Enter and refuses an empty message', async () => {
+    const { user } = renderRoute('/messages/thr-dizzy');
+    const box = await screen.findByRole('textbox', { name: /Reply to/ });
+
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    expect(screen.getByText('Write a message before sending.')).toBeInTheDocument();
+    expect(box).toBeInvalid();
+
+    await user.type(box, 'Quick update{Control>}{Enter}{/Control}');
+    await waitFor(() => expect(getDb().threads.find((t) => t.id === 'thr-dizzy')!.messages.at(-1)!.body).toBe('Quick update'));
+  });
+
+  it('keeps the draft when sending fails', async () => {
+    const { configureApi } = await import('@/api/config');
+    const { user } = renderRoute('/messages/thr-dizzy');
+    const box = await screen.findByRole('textbox', { name: /Reply to/ });
+    await user.type(box, 'Please call me');
+
+    configureApi({ failureRate: 1 });
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(await screen.findByText(/Your message is still here/)).toBeInTheDocument();
+    expect(box).toHaveValue('Please call me');
+  });
+
+  it('archives a conversation and finds it again under Archived', async () => {
+    const { user } = renderRoute('/messages/thr-billing');
+    await user.click(await screen.findByRole('button', { name: 'Archive' }));
+    await waitFor(() =>
+      expect(conversations().queryByRole('link', { name: /Question about my statement/ })).not.toBeInTheDocument(),
+    );
+
+    await user.click(screen.getByRole('radio', { name: 'Archived' }));
+    expect(await conversations().findByRole('link', { name: /Question about my statement/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Move to inbox' })).toBeInTheDocument();
+  });
+
+  it('filters to unread and searches', async () => {
+    const { user, router } = renderRoute('/messages');
+    await user.click(await screen.findByRole('radio', { name: 'Unread (1)' }));
+    expect(await threadLinks()).toHaveLength(1);
+    expect(router.state.location.search).toBe('?view=unread');
+
+    await user.click(screen.getByRole('radio', { name: 'Inbox' }));
+    await user.type(screen.getByRole('searchbox', { name: 'Search messages' }), 'lisinopril');
+    const links = await threadLinks();
+    expect(links).toHaveLength(1);
+    expect(links[0]).toHaveTextContent('Lightheaded in the mornings');
+    // Opening a result keeps the search.
+    expect(links[0]).toHaveAttribute('href', '/messages/thr-dizzy?q=lisinopril');
+  });
+
+  it('says when a conversation cannot be found', async () => {
+    renderRoute('/messages/thr-nope');
+    expect(await screen.findByText(/couldn't find that conversation/)).toBeInTheDocument();
+  });
+});
