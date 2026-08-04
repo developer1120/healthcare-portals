@@ -120,3 +120,125 @@ function CaregiverRow({ grant, patientId, now, onRemove }: { grant: CaregiverGra
             updateScopes.mutate({ grantId: grant.id, scopes }, { onSuccess: () => setEditing(false) });
           }}
           className="ml-12 flex flex-col gap-3 rounded-control bg-surface-sunken p-3"
+        >
+          <ScopeChecklist legend={`What ${grant.name.split(' ')[0]} can see and do`} value={scopes} onChange={setScopes} error={error} />
+          <div className="flex gap-2">
+            <Button type="submit" size="sm" variant="primary" loading={updateScopes.isPending}>
+              Save access
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
+              Cancel
+            </Button>
+          </div>
+        </form>
+      )}
+    </li>
+  );
+}
+
+export function CaregiversCard({ patient }: { patient: Patient }) {
+  const caregivers = useCaregivers(patient.id);
+  const revoke = useRevokeCaregiver(patient.id);
+  const now = useNow(60_000);
+  const [inviting, setInviting] = useState(false);
+  const [removing, setRemoving] = useState<CaregiverGrant | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  return (
+    <Card
+      title="Caregiver access"
+      description="Let someone you trust help manage your care. They sign in as themselves; you can see who has access here."
+    >
+      <QueryState query={caregivers} label="your caregivers" loading={<Skeleton className="h-24" />}>
+        {(grants) => {
+          const current = currentCaregivers(grants, now);
+          const past = grants.filter((g) => !current.includes(g));
+          return (
+            <div className="flex flex-col gap-3">
+              {notice && (
+                <p role="status" className="rounded-control bg-ok-soft px-3 py-2 text-sm text-ok-ink">
+                  {notice}
+                </p>
+              )}
+              {current.length === 0 ? (
+                <p className="text-sm text-ink-muted">No one else has access to your portal.</p>
+              ) : (
+                <ul aria-label="Caregivers with access" className="divide-y divide-line">
+                  {current.map((grant) => (
+                    <CaregiverRow key={grant.id} grant={grant} patientId={patient.id} now={now} onRemove={() => setRemoving(grant)} />
+                  ))}
+                </ul>
+              )}
+              <Button
+                icon={IconUserPlus}
+                className="self-start"
+                disabled={current.length >= MAX_CAREGIVERS}
+                onClick={() => {
+                  setNotice(null);
+                  setInviting(true);
+                }}
+              >
+                Invite a caregiver
+              </Button>
+              {past.length > 0 && (
+                <details className="text-sm">
+                  <summary className="cursor-pointer text-ink-muted">Past caregivers ({past.length})</summary>
+                  <ul className="mt-2 flex flex-col gap-1 text-ink-muted">
+                    {past.map((grant) => (
+                      <li key={grant.id}>
+                        {grant.name} · {statusDisplay[caregiverStatus(grant, now)].label}
+                        {grant.revokedAt && ` ${formatShortDate(grant.revokedAt)}`}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+              {inviting && (
+                <InviteDialog
+                  patient={patient}
+                  existing={grants}
+                  onClose={() => setInviting(false)}
+                  onInvited={(name) => {
+                    setInviting(false);
+                    setNotice(`Invitation sent to ${name}.`);
+                  }}
+                />
+              )}
+            </div>
+          );
+        }}
+      </QueryState>
+      {removing && (
+        <Dialog
+          open
+          onClose={() => setRemoving(null)}
+          title={removing.status === 'invited' ? `Cancel ${removing.name}’s invitation?` : `Remove ${removing.name}’s access?`}
+          description="They’ll lose access straight away. You can invite them again later."
+        >
+          {revoke.isError && (
+            <p role="alert" className="mb-3 rounded-control bg-critical-soft px-3 py-2.5 text-sm text-critical-ink">
+              {errorMessage(revoke.error)}
+            </p>
+          )}
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <Button onClick={() => setRemoving(null)}>Keep access</Button>
+            <Button
+              variant="danger"
+              loading={revoke.isPending}
+              onClick={() =>
+                revoke.mutate(removing.id, {
+                  onSuccess: () => {
+                    setNotice(`${removing.name} no longer has access.`);
+                    setRemoving(null);
+                  },
+                })
+              }
+            >
+              Remove access
+            </Button>
+          </div>
+        </Dialog>
+      )}
+    </Card>
+  );
+}
