@@ -76,3 +76,82 @@ describe('TrendChart', () => {
     expect(screen.getByText('16 Apr 26')).toBeInTheDocument();
     expect(screen.getByText('4 Oct 26')).toBeInTheDocument();
   });
+
+  it('places higher values higher up', () => {
+    const { container } = render(<TrendChart points={points} unit="%" label="A1c" />);
+    const [first, , last] = [...container.querySelectorAll('circle')].map((c) => Number(c.getAttribute('cy')));
+    expect(first!).toBeLessThan(last!);
+  });
+});
+
+describe('ResultDetailPage', () => {
+  it('opens from the results list and shows each test with its trend', async () => {
+    const { user, router } = renderRoute('/results');
+    const main = within(await screen.findByRole('main'));
+    await user.click((await main.findAllByRole('link', { name: 'Hemoglobin A1c' }))[0]!);
+
+    expect(router.state.location.pathname).toBe('/results/lab-006');
+    expect(await screen.findByRole('heading', { level: 1, name: 'Hemoglobin A1c' })).toBeInTheDocument();
+    const card = screen.getByRole('region', { name: 'Hemoglobin A1c' });
+    expect(card).toHaveTextContent('5.9 %');
+    expect(card).toHaveTextContent('Normal range 4–5.6 %');
+    expect(card).toHaveTextContent(/Down 0.1 % since .* · moving toward the normal range/);
+    expect(within(card).getByRole('img', { name: /^Hemoglobin A1c over time: 3 results from/ })).toBeInTheDocument();
+  });
+
+  it('can show the history as a table instead of a chart', async () => {
+    const { user } = renderRoute('/results/lab-006');
+    const card = await screen.findByRole('region', { name: 'Hemoglobin A1c' });
+    await user.click(within(card).getByRole('radio', { name: 'Table' }));
+
+    expect(within(card).queryByRole('img')).not.toBeInTheDocument();
+    const rows = within(within(card).getByRole('table')).getAllByRole('row').slice(1);
+    expect(rows.map((r) => r.children[1]!.textContent)).toEqual(['5.9 %', '6 %', '6.1 %']);
+  });
+
+  it('says when a test has no history yet', async () => {
+    renderRoute('/results/lab-005');
+    const card = await screen.findByRole('region', { name: 'Hemoglobin' });
+    expect(card).toHaveTextContent('This is your first Hemoglobin result here.');
+    expect(within(card).queryByRole('radio')).not.toBeInTheDocument();
+  });
+
+  it('marks a new result seen when opened directly', async () => {
+    renderRoute('/results/lab-007');
+    await screen.findByRole('heading', { level: 1, name: 'Lipid panel' });
+    await waitFor(() => expect(isNewResult(getDb().labPanels.find((p) => p.id === 'lab-007')!)).toBe(false));
+  });
+
+  it('shows the clinician’s note for a reviewed result', async () => {
+    renderRoute('/results/lab-002');
+    expect(await screen.findByText('LDL is high. Starting atorvastatin 20 mg at night.')).toBeInTheDocument();
+  });
+
+  it('does not show another patient’s result', async () => {
+    renderRoute('/results/lab-010');
+    expect(await screen.findByText(/couldn't find that result/)).toBeInTheDocument();
+  });
+
+  it('is linked from the dashboard', async () => {
+    renderRoute('/');
+    const card = await within(screen.getByRole('main')).findByRole('region', { name: 'Latest results' });
+    expect(await within(card).findByRole('link', { name: 'Hemoglobin A1c' })).toHaveAttribute('href', '/results/lab-006');
+  });
+});
+
+describe('TrendChart with one-sided ranges', () => {
+  it('keeps part of the normal zone visible for a "less than" range', () => {
+    render(
+      <TrendChart
+        points={[
+          { at: '2026-07-07T15:00:00Z', value: 158 },
+          { at: '2026-10-06T15:00:00Z', value: 142 },
+        ]}
+        band={{ high: 100 }}
+        unit="mg/dL"
+        label="LDL"
+      />,
+    );
+    expect(Number(screen.getByTestId('trend-band').getAttribute('height'))).toBeGreaterThan(10);
+  });
+});
