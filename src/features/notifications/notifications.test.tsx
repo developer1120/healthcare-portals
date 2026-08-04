@@ -90,3 +90,95 @@ describe('building notifications', () => {
     expect(notificationGroup(TEST_NOW.toISOString(), TEST_NOW)).toBe('Today');
     expect(notificationGroup(addDays(TEST_NOW, -1).toISOString(), TEST_NOW)).toBe('Yesterday');
     expect(notificationGroup(addDays(TEST_NOW, -4).toISOString(), TEST_NOW)).toBe('Earlier');
+  });
+});
+
+describe('notification endpoints', () => {
+  it('tracks read and dismissed per patient', async () => {
+    const list = await api.notifications.list(AVA);
+    expect(list.every((n) => !n.read)).toBe(true);
+    await api.notifications.markRead(AVA, [list[0]!.id]);
+    await api.notifications.dismiss(AVA, list[1]!.id);
+    const after = await api.notifications.list(AVA);
+    expect(after).toHaveLength(list.length - 1);
+    expect(after[0]).toMatchObject({ id: list[0]!.id, read: true });
+
+    await api.notifications.markAllRead(AVA);
+    expect((await api.notifications.list(AVA)).every((n) => n.read)).toBe(true);
+    await expect(api.notifications.markRead('pat-nobody', ['x'])).rejects.toMatchObject({ status: 404 });
+  });
+
+  it('saves reminder settings, which change the list', async () => {
+    await expect(api.reminders.get(AVA)).resolves.toMatchObject({ appointmentLeadHours: 24, sms: false });
+    await expect(api.reminders.update({ ...prefs, appointmentLeadHours: 12 as 24 })).rejects.toMatchObject({ status: 400 });
+    await api.reminders.update({ ...prefs, appointmentLeadHours: 48, sms: true });
+    await expect(api.reminders.get(AVA)).resolves.toMatchObject({ appointmentLeadHours: 48, sms: true });
+
+    vi.setSystemTime(addHours(new Date(nextVideo().start), -40));
+    expect((await api.notifications.list(AVA)).some((n) => n.kind === 'appointment')).toBe(true);
+  });
+});
+
+describe('notification bell and page', () => {
+  const bell = () => screen.getByRole('button', { name: /^Notifications/ });
+
+  it('shows the unread count, the latest few, and marks all read', async () => {
+    const expected = (await api.notifications.list(AVA)).length;
+    const { user } = renderRoute('/');
+    await waitFor(() => expect(bell()).toHaveAccessibleName(`Notifications, ${expected} unread`));
+
+    await user.click(bell());
+    const panel = screen.getByRole('region', { name: 'Latest notifications' });
+    expect(within(panel).getAllByRole('listitem').length).toBe(Math.min(6, expected));
+    await user.click(within(panel).getByRole('button', { name: 'Mark all as read' }));
+    await waitFor(() => expect(bell()).toHaveAccessibleName('Notifications'));
+    expect(within(panel).queryByText(/^Unread:/)).not.toBeInTheDocument();
+  });
+
+  it('opens a notification where it can be acted on, and marks it read', async () => {
+    const { user, router } = renderRoute('/');
+    await waitFor(() => expect(bell()).toHaveAccessibleName(/unread/));
+    await user.click(bell());
+    const panel = screen.getByRole('region', { name: 'Latest notifications' });
+    const first = within(panel).getAllByRole('link')[0]!;
+    const href = first.getAttribute('href')!;
+    await user.click(first);
+    expect(router.state.location.pathname).toBe(href);
+    expect(screen.queryByRole('region', { name: 'Latest notifications' })).not.toBeInTheDocument();
+    expect(getDb().notificationStates[0]!.readIds).toHaveLength(1);
+  });
+
+  it('lists everything by day, filters unread and dismisses', async () => {
+    const total = (await api.notifications.list(AVA)).length;
+    const { user } = renderRoute('/notifications');
+    expect(await screen.findByRole('heading', { level: 1, name: 'Notifications' })).toBeInTheDocument();
+    const dismissButtons = await screen.findAllByRole('button', { name: /^Dismiss: / });
+    expect(dismissButtons).toHaveLength(total);
+
+    await user.click(dismissButtons[0]!);
+    await waitFor(() => expect(screen.getAllByRole('button', { name: /^Dismiss: / })).toHaveLength(total - 1));
+
+    await user.click(screen.getByRole('button', { name: 'Mark all as read' }));
+    await user.click(screen.getByRole('radio', { name: /^Unread/ }));
+    expect(await screen.findByText('Nothing unread.')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Reminder settings' })).toHaveAttribute('href', '/settings');
+  });
+
+  it('saves reminder settings from the settings page', async () => {
+    const { user } = renderRoute('/settings');
+    const reminders = await screen.findByRole('region', { name: 'Reminders' });
+    await user.click(await within(reminders).findByRole('radio', { name: '2 hours' }));
+    await user.click(within(reminders).getByRole('checkbox', { name: /Bills/ }));
+    await user.click(within(reminders).getByRole('checkbox', { name: /Text message/ }));
+    await user.click(within(reminders).getByRole('button', { name: 'Save reminders' }));
+    expect(await within(reminders).findByRole('status')).toHaveTextContent('Saved');
+    expect(getDb().reminderPrefs[0]).toMatchObject({ appointmentLeadHours: 2, billingReminders: false, sms: true });
+  });
+
+  it('is patient-only', async () => {
+    renderRoute('/clinic/settings', { as: 'clinician' });
+    expect(await screen.findByRole('region', { name: 'Appearance' })).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Reminders' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Notifications/ })).not.toBeInTheDocument();
+  });
+});

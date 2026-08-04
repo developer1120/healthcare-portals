@@ -105,3 +105,110 @@ describe('profile endpoints', () => {
     await api.clinic.chart('cln-lindqvist', AVA);
     await api.clinic.chart('cln-lindqvist', AVA);
     let log = await api.privacy.accessLog(AVA);
+    expect(log).toHaveLength(before + 1);
+    expect(log[0]).toMatchObject({ actorId: 'cln-lindqvist', action: 'viewed-chart' });
+
+    vi.setSystemTime(addMinutes(TEST_NOW, 61));
+    await api.clinic.chart('cln-lindqvist', AVA);
+    await api.clinic.reply({ clinicianId: 'cln-lindqvist', threadId: 'thr-dizzy', body: 'How are the mornings now?' });
+    log = await api.privacy.accessLog(AVA);
+    expect(log.slice(0, 2).map((e) => e.action).sort()).toEqual(['replied-message', 'viewed-chart']);
+    expect(log).toHaveLength(before + 3);
+  });
+});
+
+describe('profile page', () => {
+  it('edits contact details with field errors', async () => {
+    const { user } = renderRoute('/profile');
+    const details = await screen.findByRole('region', { name: 'Your details' });
+    expect(details).toHaveTextContent('Legal nameAva Thompson');
+    const phone = within(details).getByRole('textbox', { name: /Mobile phone/ });
+    const zip = within(details).getByRole('textbox', { name: /ZIP code/ });
+
+    await user.clear(zip);
+    await user.type(zip, '97');
+    await user.click(within(details).getByRole('button', { name: 'Save details' }));
+    expect(within(details).getByText('Enter a 5-digit ZIP code.')).toBeInTheDocument();
+    expect(zip).toHaveAttribute('aria-invalid', 'true');
+
+    await user.clear(zip);
+    await user.type(zip, '97202');
+    await user.clear(phone);
+    await user.type(phone, '5035550123');
+    await user.click(within(details).getByRole('button', { name: 'Save details' }));
+    expect(await within(details).findByRole('status')).toHaveTextContent('Saved');
+    expect(phone).toHaveValue('(503) 555-0123');
+    expect(ava()).toMatchObject({ phone: '(503) 555-0123', address: { postcode: '97202' } });
+  });
+
+  it('invites a caregiver', async () => {
+    const { user } = renderRoute('/profile');
+    const card = await screen.findByRole('region', { name: 'Caregiver access' });
+    const mia = await within(card).findByRole('listitem', { name: 'Mia Thompson' });
+    expect(mia).toHaveTextContent('Can see: Appointments, Messages');
+    expect(within(mia).getByText('Active')).toBeInTheDocument();
+
+    await user.click(within(card).getByRole('button', { name: 'Invite a caregiver' }));
+    const dialog = screen.getByRole('dialog', { name: 'Invite a caregiver' });
+    await user.click(within(dialog).getByRole('checkbox', { name: /Appointments/ }));
+    await user.click(within(dialog).getByRole('button', { name: 'Send invitation' }));
+    expect(within(dialog).getByText('Enter their name.')).toBeInTheDocument();
+    expect(within(dialog).getByText('Choose at least one thing they can see.')).toBeInTheDocument();
+
+    await user.type(within(dialog).getByRole('textbox', { name: /Their name/ }), 'Daniel Thompson');
+    await user.type(within(dialog).getByRole('textbox', { name: /Relationship/ }), 'Father');
+    await user.type(within(dialog).getByRole('textbox', { name: /Their email/ }), 'dan.thompson@example.com');
+    await user.click(within(dialog).getByRole('checkbox', { name: /Test results/ }));
+    await user.click(within(dialog).getByRole('button', { name: 'Send invitation' }));
+
+    expect(await within(card).findByRole('status')).toHaveTextContent('Invitation sent to Daniel Thompson.');
+    const dan = await within(card).findByRole('listitem', { name: 'Daniel Thompson' });
+    expect(within(dan).getByText('Invitation sent')).toBeInTheDocument();
+    expect(dan).toHaveTextContent('Can see: Test results');
+  });
+
+  it('changes and removes a caregiver’s access', async () => {
+    const { user } = renderRoute('/profile');
+    const card = await screen.findByRole('region', { name: 'Caregiver access' });
+    const mia = await within(card).findByRole('listitem', { name: 'Mia Thompson' });
+
+    await user.click(within(mia).getByRole('button', { name: 'Edit access' }));
+    await user.click(within(mia).getByRole('checkbox', { name: /Messages/ }));
+    await user.click(within(mia).getByRole('checkbox', { name: /Billing/ }));
+    await user.click(within(mia).getByRole('button', { name: 'Save access' }));
+    await waitFor(() => expect(mia).toHaveTextContent('Can see: Appointments, Billing'));
+
+    await user.click(within(mia).getByRole('button', { name: 'Remove' }));
+    const confirm = screen.getByRole('dialog', { name: 'Remove Mia Thompson’s access?' });
+    await user.click(within(confirm).getByRole('button', { name: 'Remove access' }));
+    expect(await within(card).findByRole('status')).toHaveTextContent('Mia Thompson no longer has access.');
+    expect(within(card).getByText('No one else has access to your portal.')).toBeInTheDocument();
+    expect(within(card).getByText('Past caregivers (1)')).toBeInTheDocument();
+  });
+
+  it('toggles privacy choices and shows who looked at the record', async () => {
+    const { user } = renderRoute('/profile');
+    const research = await screen.findByRole('switch', { name: 'Use my de-identified data for research' });
+    expect(research).toHaveAttribute('aria-checked', 'false');
+    await user.click(research);
+    expect(research).toHaveAttribute('aria-checked', 'true');
+    await waitFor(() => expect(getDb().consents.find((c) => c.kind === 'research')!.granted).toBe(true));
+
+    const log = await screen.findByRole('list', { name: 'Access history' });
+    expect(await within(log).findByText('Rosa Delgado')).toBeInTheDocument();
+    expect(log.firstElementChild).toHaveTextContent('Reviewed your results');
+  });
+
+  it('is linked from the patient’s account menu', async () => {
+    const { user } = renderRoute('/');
+    await user.click(await screen.findByRole('button', { name: /account/ }));
+    expect(screen.getByRole('link', { name: 'Profile and privacy' })).toHaveAttribute('href', '/profile');
+  });
+
+  it('is not offered to clinicians', async () => {
+    const { user } = renderRoute('/clinic', { as: 'clinician' });
+    await user.click(await screen.findByRole('button', { name: /account/ }));
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Profile and privacy' })).not.toBeInTheDocument();
+  });
+});
