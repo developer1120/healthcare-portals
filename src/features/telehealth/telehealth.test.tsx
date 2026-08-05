@@ -133,3 +133,139 @@ describe('telehealth endpoints', () => {
     vi.setSystemTime(addMinutes(videoStart(), -10));
     const checkedIn = await api.appointments.checkIn(request);
     expect(checkedIn).toMatchObject({ status: 'checked-in', checkedInAt: addMinutes(videoStart(), -10).toISOString() });
+  });
+});
+
+/** Installs a fake getUserMedia. Returns the track stop spy so tests can check the camera turns off. */
+function mockMedia(behaviour: 'ok' | 'denied' | 'no-camera') {
+  const stop = vi.fn();
+  const track = { stop };
+  const getUserMedia = vi.fn(async () => {
+    if (behaviour === 'denied') throw new DOMException('Permission denied', 'NotAllowedError');
+    return {
+      getVideoTracks: () => (behaviour === 'no-camera' ? [] : [track]),
+      getAudioTracks: () => [track],
+      getTracks: () => [track],
+    } as unknown as MediaStream;
+  });
+  Object.defineProperty(navigator, 'mediaDevices', { value: { getUserMedia }, configurable: true });
+  return stop;
+}
+
+afterEach(() => {
+  Reflect.deleteProperty(navigator, 'mediaDevices');
+});
+
+describe('CheckInPage', () => {
+  it('is where the dashboard sends patients before a video visit', async () => {
+    renderRoute('/');
+    const card = await screen.findByRole('region', { name: 'Next visit' });
+    expect(await within(card).findByRole('link', { name: 'Pre-check in' })).toHaveAttribute(
+      'href',
+      `/appointments/${VIDEO}/check-in`,
+    );
+    expect(within(card).getByRole('link', { name: 'View visit' })).toHaveAttribute('href', `/appointments/${VIDEO}`);
+  });
+
+  it('tests the camera and microphone, and turns the camera off when leaving', async () => {
+    const stop = mockMedia('ok');
+    const { user, unmount } = renderRoute(`/appointments/${VIDEO}/check-in`);
+    await user.click(await screen.findByRole('button', { name: 'Test camera and microphone' }));
+
+    expect(await screen.findByText('Camera and microphone are working')).toBeInTheDocument();
+    expect(screen.getByLabelText('Your camera preview')).toBeInTheDocument();
+    unmount();
+    expect(stop).toHaveBeenCalled();
+  });
+
+  it('explains blocked permissions and missing devices', async () => {
+    mockMedia('denied');
+    const { user } = renderRoute(`/appointments/${VIDEO}/check-in`);
+    await user.click(await screen.findByRole('button', { name: 'Test camera and microphone' }));
+    expect(await screen.findByText(/isn’t allowed to use your camera or microphone/)).toBeInTheDocument();
+
+    mockMedia('no-camera');
+    await user.click(screen.getByRole('button', { name: 'Test again' }));
+    expect(await screen.findByText(/No camera found/)).toBeInTheDocument();
+  });
+
+  it('says when the browser cannot do video at all', async () => {
+    const { user } = renderRoute(`/appointments/${VIDEO}/check-in`);
+    await user.click(await screen.findByRole('button', { name: 'Test camera and microphone' }));
+    expect(await screen.findByText(/This browser can’t run a video visit/)).toBeInTheDocument();
+  });
+
+  it('tests the connection', async () => {
+    const { user } = renderRoute(`/appointments/${VIDEO}/check-in`);
+    await user.click(await screen.findByRole('button', { name: 'Test connection' }));
+    expect(await screen.findByText(/Good connection \(\d+ ms\)/)).toBeInTheDocument();
+  });
+
+  it('asks for consent, the medication check and a callback number', async () => {
+    const { user } = renderRoute(`/appointments/${VIDEO}/check-in`);
+    const phone = await screen.findByRole('textbox', { name: /we’ll call you on/ });
+    expect(phone).toHaveValue('(503) 555-0142');
+
+    await user.clear(phone);
+    await user.type(phone, '555');
+    await user.click(screen.getByRole('button', { name: 'Finish pre-check' }));
+
+    expect(phone).toHaveAccessibleDescription('Enter a 10-digit phone number, like (503) 555-0142');
+    expect(screen.getByText('Consent is needed for a video visit')).toBeInTheDocument();
+    expect(screen.getByText('Check your medication list before continuing')).toBeInTheDocument();
+    expect(getDb().appointments.find((a) => a.id === VIDEO)!.precheck).toBeUndefined();
+  });
+
+  it('finishes pre-check and shows when the waiting room opens', async () => {
+    const { user } = renderRoute(`/appointments/${VIDEO}/check-in`);
+    await user.type(await screen.findByRole('textbox', { name: /Anything new since you booked/ }), 'Ankle swelling');
+    await user.click(screen.getByRole('checkbox', { name: /checked my medication list/ }));
+    await user.click(screen.getByRole('checkbox', { name: /consent to receiving care by video/ }));
+    await user.click(screen.getByRole('button', { name: 'Finish pre-check' }));
+
+    const room = await screen.findByRole('region', { name: 'Waiting room' });
+    expect(room).toHaveTextContent(`Your waiting room opens at ${formatTime(addMinutes(videoStart(), -15))}`);
+    const opensAt = addMinutes(videoStart(), -15);
+    expect(room).toHaveTextContent(`opens in ${formatDuration(differenceInMinutes(opensAt, new Date()))}`);
+    expect(screen.getByText(/the clinic will call you on \(503\) 555-0142/)).toBeInTheDocument();
+    expect(getDb().appointments.find((a) => a.id === VIDEO)!.precheck).toMatchObject({
+      notes: 'Ankle swelling',
+      devicesOk: false,
+    });
+  });
+
+  it('lets the patient into the waiting room once it opens', async () => {
+    savePrecheck();
+    vi.setSystemTime(addMinutes(videoStart(), -5));
+    const { user } = renderRoute(`/appointments/${VIDEO}/check-in`);
+
+    const room = await screen.findByRole('region', { name: 'Waiting room' });
+    expect(room).toHaveTextContent('Your waiting room is open');
+    await user.click(within(room).getByRole('button', { name: 'Join waiting room' }));
+
+    await waitFor(() => expect(room).toHaveTextContent('Dr. Maya Okafor will let you in shortly'));
+    expect(room).toHaveTextContent('Waiting less than a minute');
+    expect(getDb().appointments.find((a) => a.id === VIDEO)!.status).toBe('checked-in');
+  });
+
+  it('sends in-person patients to the front desk', async () => {
+    renderRoute(`/appointments/${IN_PERSON}/check-in`);
+    expect(await screen.findByText(/This is an in-person visit. Check in at the front desk/)).toBeInTheDocument();
+  });
+
+  it('has nothing to do for a cancelled visit', async () => {
+    writeDb((db) => {
+      db.appointments.find((a) => a.id === VIDEO)!.status = 'cancelled';
+    });
+    renderRoute(`/appointments/${VIDEO}/check-in`);
+    expect(await screen.findByText(/ended or was cancelled/)).toBeInTheDocument();
+  });
+
+  it('offers the next step on the visit page', async () => {
+    renderRoute(`/appointments/${VIDEO}`);
+    expect(await screen.findByRole('link', { name: 'Pre-check in' })).toHaveAttribute(
+      'href',
+      `/appointments/${VIDEO}/check-in`,
+    );
+  });
+});
