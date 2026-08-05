@@ -93,3 +93,99 @@ describe('VitalsPage', () => {
     );
   });
 
+  it('explains each problem next to its field', async () => {
+    const { user } = renderRoute('/vitals');
+    const top = await screen.findByRole('textbox', { name: /Top number/ });
+    const bottom = screen.getByRole('textbox', { name: /Bottom number/ });
+
+    await user.click(screen.getByRole('button', { name: 'Save reading' }));
+    expect(top).toHaveAccessibleDescription(/Enter the top number/);
+
+    await user.type(top, '80');
+    await user.type(bottom, '120');
+    await user.click(screen.getByRole('button', { name: 'Save reading' }));
+    expect(bottom).toHaveAccessibleDescription(/should be lower than the top number/);
+
+    await user.clear(top);
+    await user.type(top, '1280');
+    await user.click(screen.getByRole('button', { name: 'Save reading' }));
+    expect(top).toHaveAccessibleDescription(/That looks unlikely. The top number is usually between 70 and 250/);
+  });
+
+  it('shows urgent advice for a very high reading', async () => {
+    const { user } = renderRoute('/vitals');
+    await user.type(await screen.findByRole('textbox', { name: /Top number/ }), '192');
+    await user.type(screen.getByRole('textbox', { name: /Bottom number/ }), '124');
+    await user.click(screen.getByRole('button', { name: 'Save reading' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('This reading is very high');
+    expect(alert).toHaveTextContent('call 911');
+  });
+
+  it('converts glucose from mmol/L before saving', async () => {
+    const { user } = renderRoute('/vitals?kind=glucose');
+    await user.click(await screen.findByRole('radio', { name: 'mmol/L' }));
+    await user.type(screen.getByRole('textbox', { name: /Blood glucose/ }), '6.0');
+    await user.selectOptions(screen.getByRole('combobox', { name: 'When' }), 'after-meal');
+    await user.click(screen.getByRole('button', { name: 'Save reading' }));
+
+    expect(await screen.findByText(/Saved/)).toHaveTextContent('Saved 108 mg/dL');
+    expect(getDb().vitals.at(-1)).toMatchObject({ kind: 'glucose', mgPerDl: 108, context: 'after-meal' });
+  });
+
+  it('converts weight from pounds', async () => {
+    const { user } = renderRoute('/vitals?kind=weight');
+    await user.click(await screen.findByRole('radio', { name: 'lb' }));
+    await user.type(screen.getByRole('textbox', { name: /^Weight/ }), '161.4');
+    await user.click(screen.getByRole('button', { name: 'Save reading' }));
+    await waitFor(() => expect(getDb().vitals.at(-1)).toMatchObject({ kind: 'weight', kg: 73.2 }));
+  });
+
+  it('refuses a time in the future', async () => {
+    const { user } = renderRoute('/vitals?kind=heart-rate');
+    const when = await screen.findByLabelText(/Taken at/);
+    await user.clear(when);
+    await user.type(when, '2026-10-20T09:00');
+    await user.type(screen.getByRole('textbox', { name: /Resting heart rate/ }), '64');
+    await user.click(screen.getByRole('button', { name: 'Save reading' }));
+    expect(when).toHaveAccessibleDescription('That time is in the future');
+  });
+});
+
+describe('reading history pages', () => {
+  const history = () => screen.getByRole('table', { name: /readings, newest first/ });
+  const firstRow = () => within(history()).getAllByRole('row')[1]!.textContent;
+
+  it('pages through every reading, newest first, keeping the page in the URL', async () => {
+    const total = getDb().vitals.filter((v) => v.patientId === 'pat-ava' && v.kind === 'blood-pressure').length;
+    const pages = Math.ceil(total / READINGS_PER_PAGE);
+    const { user, router } = renderRoute('/vitals');
+    await screen.findByRole('table', { name: /page 1 of/ });
+    expect(within(history()).getAllByRole('row')).toHaveLength(READINGS_PER_PAGE + 1);
+
+    const pager = screen.getByRole('navigation', { name: 'Reading pages' });
+    expect(within(pager).getByRole('button', { name: 'Newer' })).toBeDisabled();
+    expect(pager).toHaveTextContent(`1–${READINGS_PER_PAGE} of ${total}`);
+    const newest = firstRow();
+
+    await user.click(within(pager).getByRole('button', { name: 'Older' }));
+    expect(router.state.location.search).toContain('page=2');
+    expect(history()).toHaveAccessibleName(`Blood pressure readings, newest first, page 2 of ${pages}`);
+    expect(firstRow()).not.toBe(newest);
+
+    await user.click(within(pager).getByRole('button', { name: 'Newer' }));
+    expect(router.state.location.search).not.toContain('page=');
+    expect(firstRow()).toBe(newest);
+  });
+
+  it('starts a new reading type on its first page, and clamps a page that doesn’t exist', async () => {
+    const { user, router } = renderRoute('/vitals?kind=blood-pressure&page=999');
+    expect(await screen.findByRole('table', { name: /page (\d+) of \1$/ })).toBeInTheDocument();
+    expect(within(screen.getByRole('navigation', { name: 'Reading pages' })).getByRole('button', { name: 'Older' })).toBeDisabled();
+
+    await user.click(screen.getByRole('radio', { name: 'Weight' }));
+    expect(router.state.location.search).toBe('?kind=weight');
+    expect(await screen.findByRole('table', { name: /^Weight readings, newest first, page 1 of/ })).toBeInTheDocument();
+  });
+});
