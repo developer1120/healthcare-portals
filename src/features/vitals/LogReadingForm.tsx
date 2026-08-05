@@ -134,3 +134,139 @@ function SavedReading({ reading }: { reading: NewReading }) {
           role={advice.urgent ? 'alert' : undefined}
           className={cx(
             'flex gap-2 rounded-control px-3 py-2.5 text-sm',
+            advice.urgent ? 'border border-critical/40 bg-critical-soft text-critical-ink' : 'bg-warn-soft text-warn-ink',
+          )}
+        >
+          <IconAlertTriangle aria-hidden size={18} className="mt-px shrink-0" />
+          <div>
+            <p className="font-semibold">{advice.title}</p>
+            <p>{advice.body}</p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function LogReadingForm({ kind, patientId }: { kind: VitalKind; patientId: string }) {
+  const add = useAddReading(patientId);
+  const [saved, setSaved] = useState<NewReading | null>(null);
+  const {
+    register,
+    handleSubmit,
+    reset,
+    watch,
+    setValue,
+    formState: { errors },
+  } = useForm<FormValues>({
+    resolver: zodResolver(schemaFor(kind)),
+    defaultValues: {
+      systolic: '',
+      diastolic: '',
+      bpm: '',
+      glucose: '',
+      glucoseUnit: 'mg/dL',
+      glucoseContext: 'fasting',
+      weight: '',
+      weightUnit: 'kg',
+      takenAt: toLocalInput(new Date()),
+      note: '',
+    },
+  });
+
+  const onSubmit = handleSubmit((values) => {
+    const reading = toReading(kind, values);
+    add.mutate(reading, {
+      onSuccess: () => {
+        setSaved(reading);
+        reset({ ...values, systolic: '', diastolic: '', bpm: '', glucose: '', weight: '', note: '', takenAt: toLocalInput(new Date()) });
+      },
+    });
+  });
+
+  const numeric = { type: 'text', inputMode: 'decimal' as const, autoComplete: 'off' };
+
+  return (
+    <form noValidate onSubmit={onSubmit} className="flex flex-col gap-4">
+      {kind === 'blood-pressure' && (
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Top number (systolic)" hint="mmHg" error={errors.systolic?.message} required>
+            <Input {...numeric} placeholder="128" {...register('systolic')} />
+          </Field>
+          <Field label="Bottom number (diastolic)" hint="mmHg" error={errors.diastolic?.message} required>
+            <Input {...numeric} placeholder="82" {...register('diastolic')} />
+          </Field>
+        </div>
+      )}
+      {kind === 'heart-rate' && (
+        <Field label="Resting heart rate" hint="Beats per minute, after sitting quietly for 5 minutes" error={errors.bpm?.message} required>
+          <Input {...numeric} placeholder="64" {...register('bpm')} />
+        </Field>
+      )}
+      {kind === 'glucose' && (
+        <>
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-3">
+            <Field label="Blood glucose" error={errors.glucose?.message} required>
+              <Input {...numeric} placeholder={watch('glucoseUnit') === 'mg/dL' ? '104' : '5.8'} {...register('glucose')} />
+            </Field>
+            <SegmentedControl
+              label="Glucose unit"
+              size="sm"
+              value={watch('glucoseUnit')}
+              onChange={(unit) => setValue('glucoseUnit', unit)}
+              options={[
+                { value: 'mg/dL', label: 'mg/dL' },
+                { value: 'mmol/L', label: 'mmol/L' },
+              ]}
+              className="mb-1"
+            />
+          </div>
+          <Field label="When">
+            <Select
+              options={(Object.keys(glucoseContextLabels) as GlucoseReading['context'][]).map((value) => ({
+                value,
+                label: glucoseContextLabels[value],
+              }))}
+              {...register('glucoseContext')}
+            />
+          </Field>
+        </>
+      )}
+      {kind === 'weight' && (
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-3">
+          <Field label="Weight" error={errors.weight?.message} required>
+            <Input {...numeric} placeholder={watch('weightUnit') === 'kg' ? '73.2' : '161.4'} {...register('weight')} />
+          </Field>
+          <SegmentedControl
+            label="Weight unit"
+            size="sm"
+            value={watch('weightUnit')}
+            onChange={(unit) => setValue('weightUnit', unit)}
+            options={[
+              { value: 'kg', label: 'kg' },
+              { value: 'lb', label: 'lb' },
+            ]}
+            className="mb-1"
+          />
+        </div>
+      )}
+
+      <Field label="Taken at" error={errors.takenAt?.message} required>
+        <Input type="datetime-local" max={toLocalInput(new Date())} {...register('takenAt')} />
+      </Field>
+      <Field label="Note (optional)" hint="For example: after a walk, or felt dizzy" error={errors.note?.message}>
+        <Textarea rows={2} maxLength={VITAL_NOTE_MAX} {...register('note')} />
+      </Field>
+
+      {add.isError && (
+        <p role="alert" className="rounded-control bg-critical-soft px-3 py-2.5 text-sm text-critical-ink">
+          {errorMessage(add.error)}
+        </p>
+      )}
+      <Button type="submit" variant="primary" icon={IconDeviceFloppy} loading={add.isPending} className="self-start">
+        Save reading
+      </Button>
+      {saved && saved.kind === kind && <SavedReading reading={saved} />}
+    </form>
+  );
+}
