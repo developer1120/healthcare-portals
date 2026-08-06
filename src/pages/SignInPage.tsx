@@ -102,3 +102,108 @@ export function SignInPage() {
           <span className="font-display text-xl font-semibold text-white">Mendwell</span>
         </div>
         <div className="max-w-sm">
+          <p className="font-display text-4xl leading-tight font-semibold text-white">Care that keeps up with you.</p>
+          <ul className="mt-8 flex flex-col gap-4">
+            {highlights.map(({ icon: HighlightIcon, text }) => (
+              <li key={text} className="flex items-center gap-3">
+                <span className="flex size-9 items-center justify-center rounded-control bg-rail-active text-white">
+                  <HighlightIcon aria-hidden size={18} stroke={1.75} />
+                </span>
+                {text}
+              </li>
+            ))}
+          </ul>
+        </div>
+        <p className="text-xs">A demo portal. All people and records are fictional.</p>
+      </aside>
+
+      <main className="flex items-center justify-center px-4 py-12 sm:px-8">
+        <div className="w-full max-w-md">
+          <div className="mb-8 flex items-center gap-3 lg:hidden">
+            <span className="flex size-10 items-center justify-center rounded-[12px] bg-accent font-display text-lg font-semibold text-on-accent">
+              m
+            </span>
+            <span className="font-display text-xl font-semibold">Mendwell</span>
+          </div>
+          <h1 className="text-3xl">Sign in</h1>
+          <p className="mt-1 text-sm text-ink-muted">Patients and care teams use the same sign-in.</p>
+
+          {notice && (
+            <p role="status" className="mt-6 rounded-control bg-data-soft px-3 py-2.5 text-sm text-data-ink">
+              {notice}
+            </p>
+          )}
+
+          <form id={formId} noValidate onSubmit={onSubmit} className="mt-6 flex flex-col gap-4">
+            {signIn.isError && (
+              <p role="alert" className="rounded-control bg-critical-soft px-3 py-2.5 text-sm text-critical-ink">
+                {errorMessage(signIn.error)}
+              </p>
+            )}
+            <Field label="Email" error={errors.email?.message}>
+              <Input type="email" autoComplete="username" placeholder="name@example.com" {...register('email')} />
+            </Field>
+            <Field label="Password" error={errors.password?.message}>
+              <div className="relative">
+                <Input
+                  type={showPassword ? 'text' : 'password'}
+                  autoComplete="current-password"
+                  className="pr-11"
+                  {...register('password')}
+                />
+                <IconButton
+                  icon={showPassword ? IconEyeOff : IconEye}
+                  label={showPassword ? 'Hide password' : 'Show password'}
+                  aria-pressed={showPassword}
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowPassword((shown) => !shown)}
+                  className="absolute top-1 right-1"
+                />
+              </div>
+            </Field>
+            <label className="flex cursor-pointer items-center gap-2 text-sm">
+              <input type="checkbox" className="size-4 accent-[var(--mw-ok)]" {...register('remember')} />
+              Keep me signed in on this device
+            </label>
+            <Button type="submit" variant="primary" icon={IconLock} loading={signIn.isPending} className="mt-1">
+              Sign in
+            </Button>
+          </form>
+
+          <section aria-labelledby={`${formId}-demo`} className="mt-10 border-t border-line pt-6">
+            <h2 id={`${formId}-demo`} className="font-sans text-sm font-semibold tracking-normal">
+              Try the demo
+            </h2>
+            <p className="mt-0.5 text-sm text-ink-muted">Sign in as one of these fictional people.</p>
+            <ul className="mt-3 flex flex-col gap-2">
+              {demoAccounts.map((account) => {
+                const DemoIcon = demoIcons[account.role];
+                return (
+                  <li key={account.id}>
+                    <button
+                      type="button"
+                      disabled={signIn.isPending}
+                      onClick={() => signIn.mutate({ email: account.email, password: account.password })}
+                      className="flex w-full items-center gap-3 rounded-card border border-line bg-surface px-4 py-3 text-left transition-colors hover:border-line-strong disabled:opacity-60"
+                    >
+                      <span className="flex size-9 items-center justify-center rounded-control bg-surface-sunken text-ink-muted">
+                        <DemoIcon aria-hidden size={18} stroke={1.75} />
+                      </span>
+                      <span className="text-sm">
+                        <span className="block font-medium">Continue as {account.displayName}</span>
+                        <span className="block text-xs text-ink-muted">
+                          {account.role === 'patient' ? 'Patient portal' : 'Clinician workspace'}
+                        </span>
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        </div>
+      </main>
+    </div>
+  );
+}
