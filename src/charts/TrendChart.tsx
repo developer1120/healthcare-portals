@@ -83,3 +83,89 @@ export function TrendChart({
   const dense = points.length > 30;
   const radius = dense ? 2.5 : 4.5;
 
+  // Label the first and last dates, plus the middle one when there's room.
+  const labelled = points.length > 2 ? [0, Math.floor((points.length - 1) / 2), points.length - 1] : points.map((_, i) => i);
+  const describe = (point: TrendPoint) => `${format(toDate(point.at), 'd MMM yyyy')}: ${formatValue(point.value)} ${unit}`;
+
+  return (
+    <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} role="img" aria-label={label} className="h-auto w-full overflow-visible">
+      {band && (
+        <rect
+          data-testid="trend-band"
+          x={plotLeft}
+          width={plotRight - plotLeft}
+          y={bandTop}
+          height={Math.max(0, bandBottom - bandTop)}
+          fill="var(--mw-ok-soft)"
+        />
+      )}
+      {ticks.map((tick) => (
+        <g key={tick}>
+          <line x1={plotLeft} x2={plotRight} y1={y(tick)} y2={y(tick)} stroke="var(--mw-line)" strokeWidth={1} />
+          <text x={plotLeft - 8} y={y(tick)} textAnchor="end" dominantBaseline="middle" fontSize={11} fill="var(--mw-ink-muted)">
+            {formatValue(tick)}
+          </text>
+        </g>
+      ))}
+      <text x={plotLeft - 8} y={12} textAnchor="end" fontSize={10} fill="var(--mw-ink-subtle)">
+        {unit}
+      </text>
+
+      {references.map((reference) => (
+        <g key={reference.value} data-testid="trend-reference">
+          <line
+            x1={plotLeft}
+            x2={plotRight}
+            y1={y(reference.value)}
+            y2={y(reference.value)}
+            stroke="var(--mw-ok)"
+            strokeWidth={1.5}
+            strokeDasharray="5 4"
+          />
+          <text x={plotRight + 4} y={y(reference.value)} dominantBaseline="middle" fontSize={10} fill="var(--mw-ok-ink)">
+            {reference.label}
+          </text>
+        </g>
+      ))}
+
+      {secondary.length > 0 && (
+        <g data-testid="trend-secondary">
+          <path d={pathFor(secondary, x, y)} fill="none" stroke="var(--mw-ink-subtle)" strokeWidth={1.75} strokeLinejoin="round" />
+          {secondary.map((point) => (
+            <circle key={point.at} cx={x(toDate(point.at).getTime())} cy={y(point.value)} r={radius - 0.5} fill="var(--mw-ink-subtle)">
+              <title>{describe(point)}</title>
+            </circle>
+          ))}
+        </g>
+      )}
+
+      <path d={pathFor(points, x, y)} fill="none" stroke="var(--mw-data)" strokeWidth={2.25} strokeLinejoin="round" />
+      {points.map((point, i) => (
+        <g key={point.at}>
+          <title>{describe(point)}</title>
+          <circle
+            cx={x(toDate(point.at).getTime())}
+            cy={y(point.value)}
+            r={i === points.length - 1 ? radius + 1.5 : radius}
+            fill={point.outOfRange ? 'var(--mw-warn)' : 'var(--mw-data)'}
+            stroke="var(--mw-surface)"
+            strokeWidth={dense ? 1 : 2}
+          />
+        </g>
+      ))}
+
+      {labelled.map((i) => (
+        <text
+          key={`x-${i}`}
+          x={x(toDate(points[i]!.at).getTime())}
+          y={HEIGHT - 8}
+          textAnchor={points.length === 1 ? 'middle' : i === 0 ? 'start' : i === points.length - 1 ? 'end' : 'middle'}
+          fontSize={11}
+          fill="var(--mw-ink-muted)"
+        >
+          {format(toDate(points[i]!.at), 'd MMM yy')}
+        </text>
+      ))}
+    </svg>
+  );
+}
