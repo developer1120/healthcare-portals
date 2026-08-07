@@ -127,3 +127,133 @@ describe('route guards', () => {
   it('skips the sign-in page for someone already signed in', () => {
     const { router } = renderRoute('/sign-in', { as: 'clinician' });
     expect(router.state.location.pathname).toBe('/clinic');
+  });
+});
+
+describe('SignInPage', () => {
+  it('explains what is missing before calling the server', async () => {
+    const signIn = vi.spyOn(authApi, 'signIn');
+    const { user } = renderRoute('/sign-in', { as: null });
+
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    expect(screen.getByRole('textbox', { name: 'Email' })).toHaveAccessibleDescription('Enter your email address');
+    expect(screen.getByLabelText('Password')).toHaveAccessibleDescription('Enter your password');
+    expect(signIn).not.toHaveBeenCalled();
+
+    await user.type(screen.getByRole('textbox', { name: 'Email' }), 'ava@');
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+    expect(screen.getByRole('textbox', { name: 'Email' })).toHaveAccessibleDescription(
+      'Enter an email address like name@example.com',
+    );
+  });
+
+  it('signs in and continues to the page that was asked for', async () => {
+    const { user, router } = renderRoute('/sign-in?redirect=%2Fresults', { as: null });
+
+    await user.type(screen.getByRole('textbox', { name: 'Email' }), AVA_EMAIL);
+    await user.type(screen.getByLabelText('Password'), DEMO_PASSWORD);
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    await waitFor(() => expect(router.state.location.pathname).toBe('/results'));
+    expect(useSessionStore.getState().session).toMatchObject({ subjectId: 'pat-ava' });
+    // Not remembered: the session lives only for this tab.
+    expect(sessionStorage.getItem(SESSION_STORAGE_KEY)).not.toBeNull();
+    expect(localStorage.getItem(SESSION_STORAGE_KEY)).toBeNull();
+  });
+
+  it('remembers the session on this device when asked', async () => {
+    const { user } = renderRoute('/sign-in', { as: null });
+    await user.type(screen.getByRole('textbox', { name: 'Email' }), AVA_EMAIL);
+    await user.type(screen.getByLabelText('Password'), DEMO_PASSWORD);
+    await user.click(screen.getByRole('checkbox', { name: 'Keep me signed in on this device' }));
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    await waitFor(() => expect(localStorage.getItem(SESSION_STORAGE_KEY)).not.toBeNull());
+  });
+
+  it('shows a wrong-password error and puts the cursor back in the password field', async () => {
+    const { user } = renderRoute('/sign-in', { as: null });
+    await user.type(screen.getByRole('textbox', { name: 'Email' }), AVA_EMAIL);
+    await user.type(screen.getByLabelText('Password'), 'wrong-password');
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('That email and password don’t match our records.');
+    expect(screen.getByLabelText('Password')).toHaveFocus();
+  });
+
+  it('can show the password while typing', async () => {
+    const { user } = renderRoute('/sign-in', { as: null });
+    const password = screen.getByLabelText('Password');
+    expect(password).toHaveAttribute('type', 'password');
+
+    await user.click(screen.getByRole('button', { name: 'Show password' }));
+    expect(password).toHaveAttribute('type', 'text');
+    expect(screen.getByRole('button', { name: 'Hide password' })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('offers one-click demo accounts for each role', async () => {
+    const { user, router } = renderRoute('/sign-in', { as: null });
+
+    await user.click(screen.getByRole('button', { name: /Continue as Jonas Lindqvist/ }));
+
+    await waitFor(() => expect(router.state.location.pathname).toBe('/clinic'));
+    const nav = await screen.findByRole('navigation', { name: 'Primary' });
+    expect(within(nav).getByRole('link', { name: 'Patients' })).toHaveAttribute('href', '/clinic/patients');
+    expect(within(nav).queryByRole('link', { name: 'Medications' })).not.toBeInTheDocument();
+    // Clinicians get no patient care panel.
+    expect(screen.queryByRole('complementary', { name: 'Care panel' })).not.toBeInTheDocument();
+  });
+
+  it('reports a dropped connection', async () => {
+    configureApi({ failureRate: 1 });
+    const { user } = renderRoute('/sign-in', { as: null });
+    await user.click(screen.getByRole('button', { name: /Continue as Ava Thompson/ }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('The connection dropped.');
+  });
+});
+
+describe('account menu', () => {
+  it('shows who is signed in and closes with Escape', async () => {
+    const { user } = renderRoute('/');
+    const trigger = screen.getByRole('button', { name: /Ava Thompson/ });
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+
+    await user.click(trigger);
+    expect(trigger).toHaveAttribute('aria-expanded', 'true');
+    const panel = screen.getByText('Patient account').closest('div')!.parentElement!;
+    expect(within(panel).getByRole('link', { name: 'Settings' })).toHaveAttribute('href', '/settings');
+
+    await user.keyboard('{Escape}');
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    expect(trigger).toHaveFocus();
+  });
+
+  it('signs out, clears cached health data and confirms on the sign-in page', async () => {
+    const { user, router, queryClient } = renderRoute('/');
+    await screen.findByText('Dr. Maya Okafor');
+    expect(queryClient.getQueryData(queryKeys.careTeam('pat-ava'))).toBeDefined();
+
+    await user.click(screen.getByRole('button', { name: /Ava Thompson/ }));
+    await user.click(screen.getByRole('button', { name: 'Sign out' }));
+
+    await waitFor(() => expect(router.state.location.pathname).toBe('/sign-in'));
+    expect(useSessionStore.getState().session).toBeNull();
+    expect(await screen.findByRole('status')).toHaveTextContent('You’ve signed out.');
+    await waitFor(() => expect(queryClient.getQueryData(queryKeys.careTeam('pat-ava'))).toBeUndefined());
+    expect(queryClient.getQueryCache().getAll()).toHaveLength(0);
+  });
+
+  it('leaves no patient data behind even when sign-out interrupts loading', async () => {
+    // Slow responses, so the dashboard and care panel are still loading at sign-out.
+    configureApi({ latency: { min: 40, max: 40 } });
+    const { user, queryClient } = renderRoute('/');
+    await user.click(screen.getByRole('button', { name: /Ava Thompson/ }));
+    await user.click(screen.getByRole('button', { name: 'Sign out' }));
+
+    await screen.findByRole('heading', { level: 1, name: 'Sign in' });
+    // Wait past the latency so any late responses have landed.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(queryClient.getQueryCache().getAll().filter((query) => query.state.data !== undefined)).toEqual([]);
+  });
+});
