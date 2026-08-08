@@ -78,3 +78,83 @@ export function rangeLayout({ value, refLow, refHigh }: LabObservation): RangeLa
 
 /** Short plain-language descriptions of common tests, keyed by LOINC code. */
 export const labDescriptions: Record<string, string> = {
+  '4548-4': 'Average blood sugar over the past 2–3 months.',
+  '2093-3': 'All the cholesterol in your blood.',
+  '2089-1': 'The “bad” cholesterol that can build up in arteries.',
+  '2085-9': 'The “good” cholesterol that helps clear the bad kind.',
+  '2571-8': 'A type of fat in the blood, affected by recent meals.',
+  '2345-7': 'Blood sugar at the time of the test.',
+  '2951-2': 'A salt that helps balance fluids and nerve signals.',
+  '2823-3': 'A mineral your heart and muscles need to work properly.',
+  '2160-0': 'A waste product your kidneys filter out.',
+  '33914-3': 'An estimate of how well your kidneys are filtering.',
+  '718-7': 'The protein in red blood cells that carries oxygen.',
+  '6690-2': 'Cells that fight infection.',
+  '777-3': 'Cells that help your blood clot.',
+};
+
+/** One line describing a panel: waiting, needs attention, some outside range, or all in range. */
+export function panelStatus(panel: LabPanel): { tone: StatusTone; label: string } {
+  if (panel.status === 'pending') return { tone: 'neutral', label: 'Waiting for results' };
+  const { outOfRange, critical } = summarizePanel(panel);
+  if (critical) return { tone: 'critical', label: 'Needs attention' };
+  if (outOfRange > 0) return { tone: 'warn', label: `${outOfRange} outside range` };
+  return { tone: 'ok', label: 'All in range' };
+}
+
+export interface HistoryPoint {
+  panelId: string;
+  collectedAt: string;
+  value: number;
+  unit: string;
+  flag: LabFlag;
+}
+
+/** Every resulted value of one test (by LOINC code) for a patient, oldest first. */
+export function observationHistory(panels: LabPanel[], code: string): HistoryPoint[] {
+  return panels
+    .filter((p) => p.status !== 'pending')
+    .flatMap((panel) =>
+      panel.observations
+        .filter((o) => o.code === code)
+        .map((o) => ({
+          panelId: panel.id,
+          collectedAt: panel.collectedAt,
+          value: o.value,
+          unit: o.unit,
+          flag: flagObservation(o),
+        })),
+    )
+    .sort((a, b) => a.collectedAt.localeCompare(b.collectedAt));
+}
+
+/** How far a value sits outside its reference range; 0 inside it. */
+export function distanceFromRange(value: number, { refLow, refHigh }: Pick<LabObservation, 'refLow' | 'refHigh'>): number {
+  if (refLow !== undefined && value < refLow) return refLow - value;
+  if (refHigh !== undefined && value > refHigh) return value - refHigh;
+  return 0;
+}
+
+export interface TrendSummary {
+  change: number;
+  direction: 'up' | 'down' | 'same';
+  since: string;
+  /** Moved toward the normal range (true), away from it (false), or no clear call (null). */
+  improving: boolean | null;
+}
+
+/** Change from the previous result of the same test, judged against the reference range. */
+export function trendSummary(history: HistoryPoint[], range: Pick<LabObservation, 'refLow' | 'refHigh'>): TrendSummary | null {
+  if (history.length < 2) return null;
+  const latest = history.at(-1)!;
+  const previous = history.at(-2)!;
+  const change = Math.round((latest.value - previous.value) * 100) / 100;
+  const before = distanceFromRange(previous.value, range);
+  const after = distanceFromRange(latest.value, range);
+  return {
+    change,
+    direction: change > 0 ? 'up' : change < 0 ? 'down' : 'same',
+    since: previous.collectedAt,
+    improving: before === after ? null : after < before,
+  };
+}

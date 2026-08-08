@@ -97,3 +97,103 @@ export function assessRisk(snapshot: PatientSnapshot, now: Date = new Date()): R
   else if (flags.some((f) => f !== 'normal')) add('unreviewed-abnormal', 1, 'Abnormal labs to review');
 
   const bp = snapshot.latestBloodPressure;
+  if (bp && (bp.systolic > 180 || bp.diastolic > 120)) add('blood-pressure', 5, `BP ${bp.systolic}/${bp.diastolic}`);
+  else if (bp && (bp.systolic >= 140 || bp.diastolic >= 90)) add('blood-pressure', 3, `BP ${bp.systolic}/${bp.diastolic}`);
+
+  const a1c = latestA1c(snapshot.labs);
+  if (a1c !== undefined && a1c >= 9) add('diabetes-control', 3, `A1c ${a1c}%`);
+  else if (a1c !== undefined && a1c >= 7) add('diabetes-control', 2, `A1c ${a1c}%`);
+
+  const missed = snapshot.appointments.filter(
+    (a) => a.status === 'no-show' && differenceInDays(now, toDate(a.start)) <= MISSED_VISIT_WINDOW_DAYS,
+  );
+  if (missed.length > 0) add('missed-visit', 2, missed.length === 1 ? 'Missed a visit' : `Missed ${missed.length} visits`);
+
+  const age = ageOn(snapshot.patient.dateOfBirth, now);
+  if (age >= 75) add('older-adult', 1, `Age ${age}`);
+
+  if (snapshot.conditions.length >= 3) add('multimorbidity', 1, `${snapshot.conditions.length} conditions`);
+
+  if (snapshot.pendingRefills.some((r) => differenceInHours(now, toDate(r.requestedAt)) >= REFILL_WAIT_HOURS)) {
+    add('refill-waiting', 1, 'Refill waiting over a day');
+  }
+
+  factors.sort((a, b) => b.points - a.points);
+  const score = factors.reduce((sum, f) => sum + f.points, 0);
+  const level: RiskLevel = score >= RISK_THRESHOLDS.high ? 'high' : score >= RISK_THRESHOLDS.rising ? 'rising' : 'routine';
+  return { score, level, factors };
+}
+
+export interface RosterRow {
+  snapshot: PatientSnapshot;
+  risk: RiskAssessment;
+  nextVisit?: Appointment;
+}
+
+export function rosterRows(snapshots: PatientSnapshot[], now: Date = new Date()): RosterRow[] {
+  return snapshots.map((snapshot) => ({
+    snapshot,
+    risk: assessRisk(snapshot, now),
+    nextVisit: nextAppointment(snapshot.appointments, now),
+  }));
+}
+
+export type RosterSort = 'risk' | 'name' | 'next-visit';
+export type RosterScope = 'care-team' | 'primary';
+
+export interface RosterFilters {
+  query: string;
+  level: RiskLevel | 'all';
+  /** Show patients with any of these factors. Empty means no factor filter. */
+  factors: RiskFactorKey[];
+  scope: RosterScope;
+  sort: RosterSort;
+}
+
+export const defaultRosterFilters: RosterFilters = { query: '', level: 'all', factors: [], scope: 'care-team', sort: 'risk' };
+
+const byName = (a: RosterRow, b: RosterRow) =>
+  `${a.snapshot.patient.lastName} ${a.snapshot.patient.firstName}`.localeCompare(
+    `${b.snapshot.patient.lastName} ${b.snapshot.patient.firstName}`,
+  );
+
+function matchesQuery(patient: Patient, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  const haystack = [patient.firstName, patient.lastName, patient.preferredName ?? '', patient.mrn]
+    .join(' ')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '');
+  return q
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .split(/\s+/)
+    .every((word) => haystack.includes(word));
+}
+
+/** Everything except the risk level, so the level control can show counts for the other filters. */
+export function filterRosterExceptLevel(rows: RosterRow[], filters: RosterFilters, clinicianId: string): RosterRow[] {
+  return rows.filter(
+    ({ snapshot, risk }) =>
+      (filters.scope === 'care-team' || snapshot.patient.primaryClinicianId === clinicianId) &&
+      matchesQuery(snapshot.patient, filters.query) &&
+      (filters.factors.length === 0 || risk.factors.some((f) => filters.factors.includes(f.key))),
+  );
+}
+
+export function filterRoster(rows: RosterRow[], filters: RosterFilters, clinicianId: string): RosterRow[] {
+  const filtered = filterRosterExceptLevel(rows, filters, clinicianId).filter(
+    ({ risk }) => filters.level === 'all' || risk.level === filters.level,
+  );
+  const sorted = [...filtered];
+  if (filters.sort === 'name') sorted.sort(byName);
+  else if (filters.sort === 'next-visit') {
+    // Patients with no visit booked go last.
+    sorted.sort((a, b) => {
+      if (!a.nextVisit || !b.nextVisit) return Number(!a.nextVisit) - Number(!b.nextVisit) || byName(a, b);
+      return compareAsc(a.nextVisit.start, b.nextVisit.start);
+    });
+  } else sorted.sort((a, b) => b.risk.score - a.risk.score || byName(a, b));
+  return sorted;
+}
