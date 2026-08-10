@@ -1,0 +1,70 @@
+/*
+ * Mendwell colour tokens. Values mirror src/theme/palette.ts; tokens.test.ts fails
+ * if the two drift apart. Light is the default; dark applies when the root element
+ * has data-theme="dark" (set by useApplyTheme from the saved preference).
+ */
+:root {
+  color-scheme: light;
+  --mw-canvas: #EEF3EE;
+  --mw-surface: #FFFFFF;
+  --mw-surface-sunken: #E4ECE6;
+  --mw-ink: #183A2F;
+  --mw-ink-muted: #526B60;
+  --mw-ink-subtle: #71877D;
+  --mw-line: #DCE6DE;
+  --mw-line-strong: #C3D3C8;
+  --mw-rail: #183A2F;
+  --mw-rail-ink: #A9C4B6;
+  --mw-rail-active: #2A5444;
+  --mw-accent: #FF8A65;
+  --mw-accent-hover: #F7764F;
+  --mw-on-accent: #183A2F;
+  --mw-accent-soft: #FFE3D9;
+  --mw-accent-ink: #7A2E17;
+  --mw-data: #3D7EA6;
+  --mw-data-soft: #DDEBF3;
+  --mw-data-ink: #1F4A63;
+  --mw-ok: #2F8F5B;
+  --mw-ok-soft: #DDF0E3;
+  --mw-ok-ink: #1B5436;
+  --mw-warn: #B7860B;
+  --mw-warn-soft: #F8EDCC;
+  --mw-warn-ink: #5E4405;
+  --mw-critical: #C0362C;
+  --mw-critical-soft: #FBE4E1;
+  --mw-critical-ink: #7D1F18;
+  --mw-focus: #3D7EA6;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --mw-canvas: #0D1A15;
+  --mw-surface: #15261F;
+  --mw-surface-sunken: #10201A;
+  --mw-ink: #E3EEE7;
+  --mw-ink-muted: #9DB5A9;
+  --mw-ink-subtle: #7F988B;
+  --mw-line: #23382F;
+  --mw-line-strong: #2F493D;
+  --mw-rail: #0A1511;
+  --mw-rail-ink: #7FA191;
+  --mw-rail-active: #1A3229;
+  --mw-accent: #FF9A7A;
+  --mw-accent-hover: #FFAD93;
+  --mw-on-accent: #1A0E09;
+  --mw-accent-soft: #3A2119;
+  --mw-accent-ink: #FFC2AE;
+  --mw-data: #6FA8CC;
+  --mw-data-soft: #1A3242;
+  --mw-data-ink: #B9D8EC;
+  --mw-ok: #4DB57D;
+  --mw-ok-soft: #163527;
+  --mw-ok-ink: #A6E3C0;
+  --mw-warn: #E6B94A;
+  --mw-warn-soft: #3A2F12;
+  --mw-warn-ink: #F5DB9A;
+  --mw-critical: #EF6B5F;
+  --mw-critical-soft: #3A1A17;
+  --mw-critical-ink: #FFB8B0;
+  --mw-focus: #6FA8CC;
+}

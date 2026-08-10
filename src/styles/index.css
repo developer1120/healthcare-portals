@@ -1,0 +1,94 @@
+@import 'tailwindcss';
+@import './tokens.css';
+
+/* `dark:` utilities follow the theme attribute, not only the OS setting. */
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+/* Expose the tokens to Tailwind, e.g. bg-canvas, text-ink-muted, border-line. */
+@theme inline {
+  --color-canvas: var(--mw-canvas);
+  --color-surface: var(--mw-surface);
+  --color-surface-sunken: var(--mw-surface-sunken);
+  --color-ink: var(--mw-ink);
+  --color-ink-muted: var(--mw-ink-muted);
+  --color-ink-subtle: var(--mw-ink-subtle);
+  --color-line: var(--mw-line);
+  --color-line-strong: var(--mw-line-strong);
+  --color-rail: var(--mw-rail);
+  --color-rail-ink: var(--mw-rail-ink);
+  --color-rail-active: var(--mw-rail-active);
+  --color-accent: var(--mw-accent);
+  --color-accent-hover: var(--mw-accent-hover);
+  --color-on-accent: var(--mw-on-accent);
+  --color-accent-soft: var(--mw-accent-soft);
+  --color-accent-ink: var(--mw-accent-ink);
+  --color-data: var(--mw-data);
+  --color-data-soft: var(--mw-data-soft);
+  --color-data-ink: var(--mw-data-ink);
+  --color-ok: var(--mw-ok);
+  --color-ok-soft: var(--mw-ok-soft);
+  --color-ok-ink: var(--mw-ok-ink);
+  --color-warn: var(--mw-warn);
+  --color-warn-soft: var(--mw-warn-soft);
+  --color-warn-ink: var(--mw-warn-ink);
+  --color-critical: var(--mw-critical);
+  --color-critical-soft: var(--mw-critical-soft);
+  --color-critical-ink: var(--mw-critical-ink);
+  --color-focus: var(--mw-focus);
+}
+
+@theme {
+  --font-display: 'Outfit Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-sans: 'Figtree Variable', ui-sans-serif, system-ui, sans-serif;
+
+  --radius-control: 10px;
+  --radius-card: 14px;
+  --radius-panel: 18px;
+
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-canvas font-sans text-ink antialiased;
+    min-height: 100dvh;
+    font-feature-settings: 'ss01';
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    @apply font-display tracking-tight;
+    font-weight: 600;
+  }
+
+  /* One visible focus style for every interactive element. */
+  :focus-visible {
+    outline: 2px solid var(--mw-focus);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: var(--mw-data-soft);
+    color: var(--mw-data-ink);
+  }
+}
+
+@utility tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
