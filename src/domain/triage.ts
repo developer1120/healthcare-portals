@@ -76,3 +76,82 @@ export function triageThread(item: InboxItem, now: Date = new Date()): Triage {
   const overdue = differenceInBusinessDays(now, waitingSince) >= REPLY_WITHIN_BUSINESS_DAYS;
   const reasons: string[] = [];
   let level: TriageLevel;
+
+  const concern = emergencyConcern(text);
+  const symptoms = URGENT_SYMPTOMS.filter((s) => s.pattern.test(text)).map((s) => s.label);
+  if (concern) {
+    level = 'emergency';
+    reasons.push(concern === 'crisis' ? 'Crisis language' : 'Possible emergency');
+  } else if (symptoms.length > 0) {
+    level = 'urgent';
+    reasons.push(`Mentions ${symptoms.join(', ')}`);
+  } else if (thread.category === 'clinical' || thread.category === 'results') {
+    level = 'soon';
+    if (assessRisk(snapshot, now).level === 'high') {
+      level = 'urgent';
+      reasons.push('High-risk patient');
+    }
+  } else {
+    level = 'routine';
+  }
+  if (overdue) reasons.push('Overdue');
+
+  return { level, reasons, needsReply: true, waitingSince, overdue };
+}
+
+export interface TriagedItem extends InboxItem {
+  triage: Triage;
+}
+
+/** Needing a reply first, then by level, overdue first, then whoever has waited longest. */
+export function sortInbox(items: InboxItem[], now: Date = new Date()): TriagedItem[] {
+  return items
+    .map((item) => ({ ...item, triage: triageThread(item, now) }))
+    .sort((a, b) => {
+      if (a.triage.needsReply !== b.triage.needsReply) return a.triage.needsReply ? -1 : 1;
+      if (!a.triage.needsReply) return compareAsc(lastMessage(b.thread)!.sentAt, lastMessage(a.thread)!.sentAt);
+      const level = levelOrder.indexOf(a.triage.level) - levelOrder.indexOf(b.triage.level);
+      if (level !== 0) return level;
+      if (a.triage.overdue !== b.triage.overdue) return a.triage.overdue ? -1 : 1;
+      return a.triage.waitingSince!.getTime() - b.triage.waitingSince!.getTime();
+    });
+}
+
+export type InboxScope = 'mine' | 'team';
+export type InboxStatus = 'needs-reply' | 'all';
+
+export function filterInbox(
+  items: TriagedItem[],
+  { scope, status }: { scope: InboxScope; status: InboxStatus },
+  clinicianId: string,
+): TriagedItem[] {
+  return items.filter(
+    (item) =>
+      (scope === 'team' || item.thread.assigneeId === clinicianId) && (status === 'all' || item.triage.needsReply),
+  );
+}
+
+/** Replies the clinician can drop in and edit. */
+export const quickReplies: { label: string; body: string }[] = [
+  {
+    label: 'Call 911',
+    body: 'What you describe needs to be seen right away. Please call 911 or go to the nearest emergency department now. If you can’t, reply here and we’ll call you.',
+  },
+  {
+    label: 'Book a visit',
+    body: 'Thanks for letting me know. I’d like to see you about this. Please book a visit in the next few days, or reply here if none of the times work.',
+  },
+  {
+    label: 'Calling you today',
+    body: 'Thanks for your message. I’ll call you today to talk this through. If anything gets worse before then, call 911.',
+  },
+  {
+    label: 'Refill sent',
+    body: 'I’ve sent the refill to your pharmacy. It’s usually ready within a day.',
+  },
+];
+
+/** The rail badge: conversations assigned to this clinician with patient messages they haven't opened. */
+export function unreadForClinician(items: InboxItem[], clinicianId: string): number {
+  return items.filter((item) => item.thread.assigneeId === clinicianId && isUnreadForClinician(item.thread)).length;
+}
